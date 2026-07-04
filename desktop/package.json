@@ -1,0 +1,46 @@
+{
+  "name": "foxglove-studio-desktop",
+  "version": "1.86.0",
+  "description": "Foxglove Studio desktop application",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:all": "electron-builder --mac --win"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0"
+  },
+  "build": {
+    "appId": "dev.foxglove.studio",
+    "productName": "Foxglove Studio",
+    "files": [
+      "main.js",
+      "preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/.webpack",
+        "to": "app-web",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.developer-tools"
+    },
+    "dmg": {
+      "title": "Foxglove Studio"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
