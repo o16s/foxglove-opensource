@@ -4,6 +4,10 @@
   "description": "Foxglove Studio desktop application",
   "main": "main.js",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/o16s/foxglove-opensource.git"
+  },
   "scripts": {
     "start": "electron .",
     "build:mac": "electron-builder --mac --arm64",
