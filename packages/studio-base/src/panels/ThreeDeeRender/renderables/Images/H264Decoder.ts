@@ -124,7 +124,7 @@ export class H264Decoder {
     }
 
     if (!this.#decoder || this.#decoder.state !== "configured") {
-      throw new Error("H.264 decoder not configured - waiting for keyframe with SPS");
+      throw new NoFrameError("Waiting for keyframe with SPS");
     }
 
     // Drop delta frames until we've seen a keyframe
@@ -168,8 +168,15 @@ export class H264Decoder {
       this.#decoder.close();
     }
 
-    this.#decoder = new VideoDecoder({
+    // Capture decoder reference so callbacks can detect if they belong to a
+    // superseded decoder (stale error/output callbacks from a closed decoder
+    // can fire as already-scheduled microtasks and corrupt shared state).
+    const decoder = new VideoDecoder({
       output: (frame: VideoFrame) => {
+        if (this.#decoder !== decoder) {
+          frame.close();
+          return;
+        }
         const pending = this.#pendingFrames.shift();
         if (!pending) {
           frame.close();
@@ -186,10 +193,18 @@ export class H264Decoder {
           });
       },
       error: (err: DOMException) => {
+        if (this.#decoder !== decoder) {
+          return;
+        }
         this.#rejectAllPending(err.message);
+        // WebCodecs closes the decoder on error. Reset state so the decoder
+        // can recover automatically when the next keyframe with SPS arrives.
+        this.#codecString = undefined;
+        this.#keyframeSeen = false;
       },
     });
 
+    this.#decoder = decoder;
     this.#decoder.configure({ codec: codecString });
   }
 
@@ -197,7 +212,7 @@ export class H264Decoder {
     const pending = this.#pendingFrames;
     this.#pendingFrames = [];
     for (const entry of pending) {
-      entry.reject(new Error(reason));
+      entry.reject(new NoFrameError(reason));
     }
   }
 
