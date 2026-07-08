@@ -8,10 +8,16 @@ import { IterableSourceInitializeArgs } from "@foxglove/studio-base/players/Iter
 import { WorkerIterableSourceWorker } from "@foxglove/studio-base/players/IterablePlayer/WorkerIterableSourceWorker";
 
 import { McapIterableSource } from "./McapIterableSource";
+import { McapMultiSource } from "./McapMultiSource";
 
 export function initialize(args: IterableSourceInitializeArgs): WorkerIterableSourceWorker {
-  if (args.file) {
-    const source = new McapIterableSource({ type: "file", file: args.file });
+  if (args.files && args.files.length > 1) {
+    const source = new McapMultiSource(args.files);
+    const wrapped = new WorkerIterableSourceWorker(source);
+    return Comlink.proxy(wrapped);
+  } else if (args.file ?? args.files?.[0]) {
+    const file = args.file ?? args.files![0]!;
+    const source = new McapIterableSource({ type: "file", file });
     const wrapped = new WorkerIterableSourceWorker(source);
     return Comlink.proxy(wrapped);
   } else if (args.url) {

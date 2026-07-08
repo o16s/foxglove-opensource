@@ -15,12 +15,16 @@ class McapLocalDataSourceFactory implements IDataSourceFactory {
   public displayName = "MCAP";
   public iconName: IDataSourceFactory["iconName"] = "OpenFile";
   public supportedFileTypes = [".mcap"];
+  public supportsMultiFile = true;
 
   public initialize(args: DataSourceFactoryInitializeArgs): Player | undefined {
-    const file = args.file;
-    if (!file) {
+    const files = args.files ?? (args.file ? [args.file] : undefined);
+    if (!files || files.length === 0) {
       return;
     }
+
+    const name =
+      files.length === 1 ? files[0]!.name : files.map((f) => f.name).join(", ");
 
     const source = new WorkerIterableSource({
       initWorker: () => {
@@ -32,13 +36,13 @@ class McapLocalDataSourceFactory implements IDataSourceFactory {
           ),
         );
       },
-      initArgs: { file },
+      initArgs: files.length === 1 ? { file: files[0] } : { files },
     });
 
     return new IterablePlayer({
       metricsCollector: args.metricsCollector,
       source,
-      name: file.name,
+      name,
       sourceId: this.id,
     });
   }

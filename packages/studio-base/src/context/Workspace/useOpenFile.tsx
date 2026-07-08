@@ -25,7 +25,8 @@ export function useOpenFile(sources: readonly IDataSourceFactory[]): () => Promi
   }, [sources]);
 
   return useCallback(async () => {
-    const [fileHandle] = await showOpenFilePicker({
+    const fileHandles = await showOpenFilePicker({
+      multiple: true,
       types: [
         {
           description: allExtensions.join(", "),
@@ -33,31 +34,36 @@ export function useOpenFile(sources: readonly IDataSourceFactory[]): () => Promi
         },
       ],
     });
-    if (!fileHandle) {
+    if (fileHandles.length === 0) {
       return;
     }
 
-    const file = await fileHandle.getFile();
+    const files = await Promise.all(fileHandles.map((h) => h.getFile()));
+    const firstFile = files[0]!;
+
     // Find the first _file_ source which can load our extension
     const matchingSources = sources.filter((source) => {
-      // Only consider _file_ type sources that have a list of supported file types
       if (!source.supportedFileTypes || source.type !== "file") {
         return false;
       }
 
-      const extension = path.extname(file.name);
+      const extension = path.extname(firstFile.name);
       return source.supportedFileTypes.includes(extension);
     });
 
     if (matchingSources.length > 1) {
-      throw new Error(`Multiple source matched ${file.name}. This is not supported.`);
+      throw new Error(`Multiple source matched ${firstFile.name}. This is not supported.`);
     }
 
     const foundSource = matchingSources[0];
     if (!foundSource) {
-      throw new Error(`Cannot find source to handle ${file.name}`);
+      throw new Error(`Cannot find source to handle ${firstFile.name}`);
     }
 
-    selectSource(foundSource.id, { type: "file", handle: fileHandle });
+    if (files.length === 1) {
+      selectSource(foundSource.id, { type: "file", handle: fileHandles[0] });
+    } else {
+      selectSource(foundSource.id, { type: "file", files });
+    }
   }, [allExtensions, selectSource, sources]);
 }
