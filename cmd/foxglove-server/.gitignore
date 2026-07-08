@@ -1,0 +1,3 @@
+foxglove-studio
+dist/*
+!dist/.gitkeep

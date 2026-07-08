@@ -15,13 +15,18 @@ export function initialize(args: IterableSourceInitializeArgs): WorkerIterableSo
     const source = new McapMultiSource(args.files);
     const wrapped = new WorkerIterableSourceWorker(source);
     return Comlink.proxy(wrapped);
+  } else if (args.urls && args.urls.length > 1) {
+    const source = new McapMultiSource(args.urls);
+    const wrapped = new WorkerIterableSourceWorker(source);
+    return Comlink.proxy(wrapped);
   } else if (args.file ?? args.files?.[0]) {
     const file = args.file ?? args.files![0]!;
     const source = new McapIterableSource({ type: "file", file });
     const wrapped = new WorkerIterableSourceWorker(source);
     return Comlink.proxy(wrapped);
-  } else if (args.url) {
-    const source = new McapIterableSource({ type: "url", url: args.url });
+  } else if (args.url ?? args.urls?.[0]) {
+    const url = args.url ?? args.urls![0]!;
+    const source = new McapIterableSource({ type: "url", url });
     const wrapped = new WorkerIterableSourceWorker(source);
     return Comlink.proxy(wrapped);
   }

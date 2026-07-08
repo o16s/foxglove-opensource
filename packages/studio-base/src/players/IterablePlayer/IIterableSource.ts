@@ -197,6 +197,7 @@ export interface IIterableSource {
 export type IterableSourceInitializeArgs = {
   file?: File;
   url?: string;
+  urls?: string[];
   files?: File[];
   params?: Record<string, string | undefined>;
 

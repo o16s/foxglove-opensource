@@ -15,6 +15,7 @@ import {
   FoxgloveWebSocketDataSourceFactory,
   UlogLocalDataSourceFactory,
   McapLocalDataSourceFactory,
+  McapServerDataSourceFactory,
   SampleNuscenesDataSourceFactory,
   SharedRoot,
 } from "@foxglove/studio-base";
@@ -48,6 +49,7 @@ export function WebRoot(props: {
       new UlogLocalDataSourceFactory(),
       new SampleNuscenesDataSourceFactory(),
       new McapLocalDataSourceFactory(),
+      new McapServerDataSourceFactory(),
       new RemoteDataSourceFactory(),
     ];
 

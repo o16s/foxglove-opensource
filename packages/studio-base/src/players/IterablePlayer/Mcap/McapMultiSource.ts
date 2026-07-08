@@ -23,8 +23,12 @@ import {
 export class McapMultiSource implements IIterableSource {
   #sources: McapIterableSource[];
 
-  public constructor(files: Blob[]) {
-    this.#sources = files.map((file) => new McapIterableSource({ type: "file", file }));
+  public constructor(sources: Blob[] | string[]) {
+    this.#sources = sources.map((source) =>
+      typeof source === "string"
+        ? new McapIterableSource({ type: "url", url: source })
+        : new McapIterableSource({ type: "file", file: source }),
+    );
   }
 
   public async initialize(): Promise<Initalization> {

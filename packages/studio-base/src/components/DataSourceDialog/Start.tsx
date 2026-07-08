@@ -421,6 +421,8 @@ function SidebarItems(props: {
   );
 }
 
+const isServerMode = typeof (globalThis as Record<string, unknown>).FOXGLOVE_STUDIO_SERVER === "object";
+
 export default function Start(): JSX.Element {
   const { recentSources, selectRecent } = usePlayerSelection();
   const { classes } = useStyles();
@@ -429,7 +431,34 @@ export default function Start(): JSX.Element {
   const { dialogActions } = useWorkspaceActions();
 
   const startItems = useMemo(() => {
-    return [
+    const items: Array<{
+      key: string;
+      text: string;
+      secondaryText: string;
+      icon: JSX.Element;
+      onClick: () => void;
+      href?: string;
+      iconProps?: { iconName: string };
+    }> = [];
+
+    if (isServerMode) {
+      items.push({
+        key: "browse-recordings",
+        text: "Browse recordings",
+        secondaryText: "Open MCAP files from the server",
+        icon: (
+          <SvgIcon fontSize="large" color="primary" viewBox="0 0 2048 2048">
+            <path d="M1792 384v128H256V384h1536zM256 1664V640h1536v1024H256zm128-896v768h1280V768H384zm1024 128v512H640V896h768zM768 1280V1024h512v256H768z" />
+          </SvgIcon>
+        ),
+        onClick: () => {
+          dialogActions.dataSource.open("server");
+          void analytics.logEvent(AppEvent.DIALOG_SELECT_VIEW, { type: "server" });
+        },
+      });
+    }
+
+    items.push(
       {
         key: "open-local-file",
         text: t("openLocalFile"),
@@ -473,7 +502,9 @@ export default function Start(): JSX.Element {
           void analytics.logEvent(AppEvent.DIALOG_SELECT_VIEW, { type: "live" });
         },
       },
-    ];
+    );
+
+    return items;
   }, [analytics, dialogActions.dataSource, t]);
 
   return (
