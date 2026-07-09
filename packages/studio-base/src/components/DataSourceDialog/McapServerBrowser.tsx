@@ -2,10 +2,13 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import FolderIcon from "@mui/icons-material/Folder";
+import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import {
   Button,
   Checkbox,
   CircularProgress,
+  Collapse,
   List,
   ListItem,
   ListItemButton,
@@ -27,6 +30,13 @@ type McapFileInfo = {
   path: string;
   size: number;
   modTime: string;
+};
+
+type FolderNode = {
+  name: string;
+  path: string;
+  folders: Map<string, FolderNode>;
+  files: McapFileInfo[];
 };
 
 const useStyles = makeStyles()((theme) => ({
@@ -65,6 +75,154 @@ function formatDate(isoString: string): string {
   }
 }
 
+function buildTree(files: McapFileInfo[]): FolderNode {
+  const root: FolderNode = { name: "", path: "", folders: new Map(), files: [] };
+
+  for (const file of files) {
+    const parts = file.path.split("/");
+    let node = root;
+
+    // Navigate/create folder nodes for all but the last segment
+    for (let i = 0; i < parts.length - 1; i++) {
+      const folderName = parts[i]!;
+      const folderPath = parts.slice(0, i + 1).join("/");
+      let child = node.folders.get(folderName);
+      if (!child) {
+        child = { name: folderName, path: folderPath, folders: new Map(), files: [] };
+        node.folders.set(folderName, child);
+      }
+      node = child;
+    }
+
+    node.files.push(file);
+  }
+
+  return root;
+}
+
+function collectFilePaths(node: FolderNode): string[] {
+  const paths: string[] = node.files.map((f) => f.path);
+  for (const child of node.folders.values()) {
+    paths.push(...collectFilePaths(child));
+  }
+  return paths;
+}
+
+function FolderView({
+  node,
+  depth,
+  selected,
+  toggleFile,
+  expanded,
+  toggleFolder,
+}: {
+  node: FolderNode;
+  depth: number;
+  selected: Set<string>;
+  toggleFile: (path: string) => void;
+  expanded: Set<string>;
+  toggleFolder: (path: string) => void;
+}): JSX.Element {
+  const sortedFolders = useMemo(
+    () => Array.from(node.folders.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    [node.folders],
+  );
+  const sortedFiles = useMemo(
+    () => [...node.files].sort((a, b) => a.name.localeCompare(b.name)),
+    [node.files],
+  );
+
+  return (
+    <>
+      {sortedFolders.map((folder) => {
+        const isExpanded = expanded.has(folder.path);
+        const allPaths = collectFilePaths(folder);
+        const allSelected = allPaths.length > 0 && allPaths.every((p) => selected.has(p));
+        const someSelected = !allSelected && allPaths.some((p) => selected.has(p));
+
+        return (
+          <div key={folder.path}>
+            <ListItem disablePadding>
+              <ListItemButton
+                dense
+                sx={{ pl: 2 + depth * 3 }}
+                onClick={() => { toggleFolder(folder.path); }}
+              >
+                <ListItemIcon sx={{ minWidth: 36 }}>
+                  <Checkbox
+                    edge="start"
+                    checked={allSelected}
+                    indeterminate={someSelected}
+                    disableRipple
+                    tabIndex={-1}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      for (const p of allPaths) {
+                        if (allSelected) {
+                          if (selected.has(p)) {
+                            toggleFile(p);
+                          }
+                        } else {
+                          if (!selected.has(p)) {
+                            toggleFile(p);
+                          }
+                        }
+                      }
+                    }}
+                  />
+                </ListItemIcon>
+                <ListItemIcon sx={{ minWidth: 32 }}>
+                  {isExpanded ? <FolderOpenIcon color="primary" /> : <FolderIcon color="primary" />}
+                </ListItemIcon>
+                <ListItemText
+                  primary={folder.name}
+                  primaryTypographyProps={{ fontWeight: 600 }}
+                  secondary={`${allPaths.length} file${allPaths.length !== 1 ? "s" : ""}`}
+                />
+              </ListItemButton>
+            </ListItem>
+            <Collapse in={isExpanded}>
+              <FolderView
+                node={folder}
+                depth={depth + 1}
+                selected={selected}
+                toggleFile={toggleFile}
+                expanded={expanded}
+                toggleFolder={toggleFolder}
+              />
+            </Collapse>
+          </div>
+        );
+      })}
+      {sortedFiles.map((file) => (
+        <ListItem key={file.path} disablePadding>
+          <ListItemButton
+            dense
+            sx={{ pl: 2 + depth * 3 }}
+            onClick={() => { toggleFile(file.path); }}
+          >
+            <ListItemIcon sx={{ minWidth: 36 }}>
+              <Checkbox
+                edge="start"
+                checked={selected.has(file.path)}
+                disableRipple
+                tabIndex={-1}
+              />
+            </ListItemIcon>
+            <ListItemText
+              primary={file.name}
+              secondary={formatDate(file.modTime)}
+            />
+            <Typography variant="body2" sx={{ color: "text.secondary", whiteSpace: "nowrap", ml: 2 }}>
+              {formatFileSize(file.size)}
+            </Typography>
+          </ListItemButton>
+        </ListItem>
+      ))}
+    </>
+  );
+}
+
 export default function McapServerBrowser(): JSX.Element {
   const { classes } = useStyles();
   const { selectSource } = usePlayerSelection();
@@ -74,6 +232,7 @@ export default function McapServerBrowser(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const apiBase = useMemo(() => {
     const serverConfig = (globalThis as Record<string, unknown>).FOXGLOVE_STUDIO_SERVER as
@@ -81,6 +240,21 @@ export default function McapServerBrowser(): JSX.Element {
       | undefined;
     return serverConfig?.apiBase ?? "";
   }, []);
+
+  const tree = useMemo(() => buildTree(files), [files]);
+
+  // Auto-expand all folders on load
+  useEffect(() => {
+    const allFolders = new Set<string>();
+    const walk = (node: FolderNode) => {
+      for (const child of node.folders.values()) {
+        allFolders.add(child.path);
+        walk(child);
+      }
+    };
+    walk(tree);
+    setExpanded(allFolders);
+  }, [tree]);
 
   useEffect(() => {
     setLoading(true);
@@ -104,6 +278,18 @@ export default function McapServerBrowser(): JSX.Element {
 
   const toggleFile = useCallback((path: string) => {
     setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleFolder = useCallback((path: string) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(path)) {
         next.delete(path);
@@ -167,27 +353,14 @@ export default function McapServerBrowser(): JSX.Element {
               </Button>
             </Stack>
             <List disablePadding className={classes.list}>
-              {files.map((file) => (
-                <ListItem key={file.path} disablePadding>
-                  <ListItemButton dense onClick={() => { toggleFile(file.path); }}>
-                    <ListItemIcon sx={{ minWidth: 36 }}>
-                      <Checkbox
-                        edge="start"
-                        checked={selected.has(file.path)}
-                        disableRipple
-                        tabIndex={-1}
-                      />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={file.name}
-                      secondary={formatDate(file.modTime)}
-                    />
-                    <Typography variant="body2" className={classes.fileSize}>
-                      {formatFileSize(file.size)}
-                    </Typography>
-                  </ListItemButton>
-                </ListItem>
-              ))}
+              <FolderView
+                node={tree}
+                depth={0}
+                selected={selected}
+                toggleFile={toggleFile}
+                expanded={expanded}
+                toggleFolder={toggleFolder}
+              />
             </List>
           </>
         )}
