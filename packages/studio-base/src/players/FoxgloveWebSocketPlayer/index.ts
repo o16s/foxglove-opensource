@@ -96,6 +96,7 @@ export default class FoxgloveWebSocketPlayer implements Player {
   readonly #sourceId: string;
 
   #url: string; // WebSocket URL.
+  #token?: string; // Optional auth token, sent as a WebSocket subprotocol.
   #name: string;
   #client?: FoxgloveClient; // The client when we're connected.
   #id: string = uuidv4(); // Unique ID for this player session.
@@ -157,15 +158,18 @@ export default class FoxgloveWebSocketPlayer implements Player {
 
   public constructor({
     url,
+    token,
     metricsCollector,
     sourceId,
   }: {
     url: string;
+    token?: string;
     metricsCollector: PlayerMetricsCollectorInterface;
     sourceId: string;
   }) {
     this.#metricsCollector = metricsCollector;
     this.#url = url;
+    this.#token = token;
     this.#name = url;
     this.#metricsCollector.playerConstructed();
     this.#sourceId = sourceId;
@@ -192,11 +196,16 @@ export default class FoxgloveWebSocketPlayer implements Player {
       this.#client?.close();
     }, 10000);
 
+    const protocols: string[] = [FoxgloveClient.SUPPORTED_SUBPROTOCOL];
+    if (this.#token) {
+      protocols.push(this.#token);
+    }
+
     this.#client = new FoxgloveClient({
       ws:
         typeof Worker !== "undefined"
-          ? new WorkerSocketAdapter(this.#url, [FoxgloveClient.SUPPORTED_SUBPROTOCOL])
-          : new WebSocket(this.#url, [FoxgloveClient.SUPPORTED_SUBPROTOCOL]),
+          ? new WorkerSocketAdapter(this.#url, protocols)
+          : new WebSocket(this.#url, protocols),
     });
 
     this.#client.on("open", () => {

@@ -49,6 +49,11 @@ export default class FoxgloveWebSocketDataSourceFactory implements IDataSourceFa
           }
         },
       },
+      {
+        id: "token",
+        label: "Auth token (optional)",
+        defaultValue: "",
+      },
     ],
   };
 
@@ -60,6 +65,7 @@ export default class FoxgloveWebSocketDataSourceFactory implements IDataSourceFa
 
     return new FoxgloveWebSocketPlayer({
       url,
+      token: args.params?.token,
       metricsCollector: args.metricsCollector,
       sourceId: this.id,
     });
