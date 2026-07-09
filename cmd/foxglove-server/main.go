@@ -1,12 +1,20 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log"
+	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,9 +32,45 @@ type McapFileInfo struct {
 	ModTime string `json:"modTime"`
 }
 
+func generateSelfSignedCert() (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate key: %w", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate serial: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject:      pkix.Name{CommonName: "Foxglove Studio"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.IPv6loopback},
+		DNSNames:     []string{"localhost"},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("create certificate: %w", err)
+	}
+
+	return tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}, nil
+}
+
 func main() {
 	mcapPath := flag.String("mcap-path", ".", "Directory containing MCAP files")
 	port := flag.Int("port", 8152, "HTTP server port")
+	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
+	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
+	useTLS := flag.Bool("tls", false, "Enable HTTPS with auto-generated self-signed certificate")
 	flag.Parse()
 
 	absPath, err := filepath.Abs(*mcapPath)
@@ -182,7 +226,28 @@ func main() {
 	})
 
 	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("Foxglove Studio server starting on http://localhost:%d", *port)
 	log.Printf("Serving MCAP files from: %s", absPath)
-	log.Fatal(http.ListenAndServe(addr, mux))
+
+	if *tlsCert != "" && *tlsKey != "" {
+		log.Printf("Foxglove Studio server starting on https://localhost:%d", *port)
+		log.Fatal(http.ListenAndServeTLS(addr, *tlsCert, *tlsKey, mux))
+	} else if *useTLS {
+		cert, err := generateSelfSignedCert()
+		if err != nil {
+			log.Fatalf("Failed to generate self-signed certificate: %v", err)
+		}
+		log.Printf("Generated self-signed TLS certificate (valid 1 year, localhost/127.0.0.1)")
+		log.Printf("Foxglove Studio server starting on https://localhost:%d", *port)
+		server := &http.Server{
+			Addr:    addr,
+			Handler: mux,
+			TLSConfig: &tls.Config{
+				Certificates: []tls.Certificate{cert},
+			},
+		}
+		log.Fatal(server.ListenAndServeTLS("", ""))
+	} else {
+		log.Printf("Foxglove Studio server starting on http://localhost:%d", *port)
+		log.Fatal(http.ListenAndServe(addr, mux))
+	}
 }

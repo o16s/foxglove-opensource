@@ -175,7 +175,7 @@ export default class FoxgloveWebSocketPlayer implements Player {
     this.#sourceId = sourceId;
     this.#urlState = {
       sourceId: this.#sourceId,
-      parameters: { url: this.#url },
+      parameters: { url: this.#url, ...(this.#token ? { token: this.#token } : {}) },
     };
     this.#open();
   }
