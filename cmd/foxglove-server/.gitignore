@@ -1,3 +1,5 @@
 foxglove-studio
+foxglove-studio-arm64
 dist/*
 !dist/.gitkeep
+.env
