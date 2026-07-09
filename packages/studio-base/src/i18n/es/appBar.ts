@@ -1,0 +1,36 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
+
+export const appBar = {
+  about: "Acerca de",
+  addPanel: "Agregar panel",
+  documentation: "Documentación",
+  exploreSampleData: "Explorar datos de ejemplo",
+  exportLayoutToFile: "Exportar diseño a archivo…",
+  extensions: "Extensiones",
+  file: "Archivo",
+  help: "Ayuda",
+  hideLeftSidebar: "Ocultar barra lateral izquierda",
+  hideRightSidebar: "Ocultar barra lateral derecha",
+  importLayoutFromFile: "Importar diseño desde archivo…",
+  joinOurSlack: "Únase a nuestro Slack",
+  joinSlackCommunity: "Únase a la comunidad de Slack",
+  noDataSource: "Sin fuente de datos",
+  open: "Abrir…",
+  openConnection: "Abrir conexión…",
+  openDataSources: "Abrir fuentes de datos",
+  openLocalFile: "Abrir archivo local…",
+  recentDataSources: "Fuentes de datos recientes",
+  recentlyViewed: "Vistos recientemente",
+  settings: "Configuración de visualización",
+  showLeftSidebar: "Mostrar barra lateral izquierda",
+  showRightSidebar: "Mostrar barra lateral derecha",
+  signIn: "Iniciar sesión",
+  signOut: "Cerrar sesión",
+  unknown: "desconocido",
+  userProfile: "Perfil de usuario",
+  view: "Ver",
+  viewData: "Ver datos",
+  viewOurDocs: "Ver nuestra documentación",
+};

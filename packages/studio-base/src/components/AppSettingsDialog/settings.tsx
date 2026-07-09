@@ -43,6 +43,8 @@ import { formatTimeRaw } from "@foxglove/studio-base/util/time";
 const MESSAGE_RATES = [1, 3, 5, 10, 15, 20, 30, 60];
 const LANGUAGE_OPTIONS: { key: Language; value: string }[] = [
   { key: "en", value: "English" },
+  { key: "de", value: "Deutsch" },
+  { key: "es", value: "Español" },
   { key: "zh", value: "中文" },
   { key: "ja", value: "日本語" },
 ];
