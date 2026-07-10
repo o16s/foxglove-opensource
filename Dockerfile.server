@@ -3,12 +3,10 @@ FROM node:16 AS web-build
 WORKDIR /src
 RUN corepack enable yarn
 
-COPY package.json yarn.lock .yarnrc.yml ./
-COPY .yarn .yarn
-COPY packages packages
-COPY patches patches
-RUN yarn install
+# Copy everything (filtered by .dockerignore)
+COPY . .
 
+RUN yarn install
 RUN yarn run web:build:prod
 
 # Stage 2: Build Go server
