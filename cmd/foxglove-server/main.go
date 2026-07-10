@@ -19,7 +19,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/foxglove/mcap/go/mcap"
 )
 
 //go:embed dist/*
@@ -30,6 +33,71 @@ type McapFileInfo struct {
 	Path    string `json:"path"`
 	Size    int64  `json:"size"`
 	ModTime string `json:"modTime"`
+}
+
+type McapFileIndex struct {
+	Path      string  `json:"path"`
+	Folder    string  `json:"folder"`
+	Filename  string  `json:"filename"`
+	StartTime float64 `json:"startTime"` // unix seconds
+	EndTime   float64 `json:"endTime"`   // unix seconds
+	Size      int64   `json:"size"`
+}
+
+type indexCacheEntry struct {
+	modTime   time.Time
+	size      int64
+	startTime uint64 // nanoseconds
+	endTime   uint64 // nanoseconds
+}
+
+var (
+	indexCache   = make(map[string]*indexCacheEntry)
+	indexCacheMu sync.Mutex
+)
+
+// getMcapTimeRange reads the summary section of an MCAP file to extract
+// message start/end timestamps. This is O(1) — it seeks to the footer
+// without scanning messages.
+func getMcapTimeRange(path string) (startNs, endNs uint64, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+
+	reader, err := mcap.NewReader(f)
+	if err != nil {
+		return 0, 0, fmt.Errorf("mcap reader: %w", err)
+	}
+	defer reader.Close()
+
+	info, err := reader.Info()
+	if err != nil {
+		return 0, 0, fmt.Errorf("mcap info: %w", err)
+	}
+
+	// Prefer Statistics record
+	if info.Statistics != nil && info.Statistics.MessageCount > 0 {
+		return info.Statistics.MessageStartTime, info.Statistics.MessageEndTime, nil
+	}
+
+	// Fallback: scan ChunkIndex records
+	if len(info.ChunkIndexes) > 0 {
+		startNs = info.ChunkIndexes[0].MessageStartTime
+		endNs = info.ChunkIndexes[0].MessageEndTime
+		for _, ci := range info.ChunkIndexes[1:] {
+			if ci.MessageStartTime < startNs {
+				startNs = ci.MessageStartTime
+			}
+			if ci.MessageEndTime > endNs {
+				endNs = ci.MessageEndTime
+			}
+		}
+		return startNs, endNs, nil
+	}
+
+	return 0, 0, fmt.Errorf("no statistics or chunk indexes found")
 }
 
 func generateSelfSignedCert() (tls.Certificate, error) {
@@ -66,25 +134,30 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 }
 
 func main() {
-	mcapPath := flag.String("mcap-path", ".", "Directory containing MCAP files")
+	mcapPath := flag.String("mcap-path", "", "Directory containing MCAP files (enables file browser)")
 	port := flag.Int("port", 8152, "HTTP server port")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
 	useTLS := flag.Bool("tls", false, "Enable HTTPS with auto-generated self-signed certificate")
 	flag.Parse()
 
-	absPath, err := filepath.Abs(*mcapPath)
-	if err != nil {
-		log.Fatalf("Invalid path: %v", err)
-	}
+	var absPath string
+	if *mcapPath != "" {
+		var err error
+		absPath, err = filepath.Abs(*mcapPath)
+		if err != nil {
+			log.Fatalf("Invalid path: %v", err)
+		}
 
-	info, err := os.Stat(absPath)
-	if err != nil || !info.IsDir() {
-		log.Fatalf("Not a valid directory: %s", absPath)
+		info, err := os.Stat(absPath)
+		if err != nil || !info.IsDir() {
+			log.Fatalf("Not a valid directory: %s", absPath)
+		}
 	}
 
 	mux := http.NewServeMux()
 
+	if absPath != "" {
 	// API: list MCAP files
 	mux.HandleFunc("/api/mcap/files", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -184,6 +257,94 @@ func main() {
 		http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
 	})
 
+	// API: index MCAP files (returns start/end timestamps per file)
+	mux.HandleFunc("/api/mcap/index", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var results []McapFileIndex
+		err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(strings.ToLower(d.Name()), ".mcap") {
+				return nil
+			}
+
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			relPath, _ := filepath.Rel(absPath, path)
+
+			// Check cache
+			indexCacheMu.Lock()
+			cached, ok := indexCache[relPath]
+			if ok && cached.modTime.Equal(info.ModTime()) && cached.size == info.Size() {
+				results = append(results, McapFileIndex{
+					Path:      relPath,
+					Folder:    filepath.Dir(relPath),
+					Filename:  d.Name(),
+					StartTime: float64(cached.startTime) / 1e9,
+					EndTime:   float64(cached.endTime) / 1e9,
+					Size:      info.Size(),
+				})
+				indexCacheMu.Unlock()
+				return nil
+			}
+			indexCacheMu.Unlock()
+
+			// Read time range from MCAP summary
+			startNs, endNs, err := getMcapTimeRange(path)
+			if err != nil {
+				log.Printf("Warning: could not index %s: %v", relPath, err)
+				return nil
+			}
+
+			// Update cache
+			indexCacheMu.Lock()
+			indexCache[relPath] = &indexCacheEntry{
+				modTime:   info.ModTime(),
+				size:      info.Size(),
+				startTime: startNs,
+				endTime:   endNs,
+			}
+			indexCacheMu.Unlock()
+
+			folder := filepath.Dir(relPath)
+			if folder == "." {
+				folder = ""
+			}
+
+			results = append(results, McapFileIndex{
+				Path:      relPath,
+				Folder:    folder,
+				Filename:  d.Name(),
+				StartTime: float64(startNs) / 1e9,
+				EndTime:   float64(endNs) / 1e9,
+				Size:      info.Size(),
+			})
+			return nil
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if results == nil {
+			results = []McapFileIndex{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		json.NewEncoder(w).Encode(results)
+	})
+	} // end if absPath != ""
+
 	// Serve embedded static files (the Foxglove web app)
 	staticFS, err := fs.Sub(staticFiles, "dist")
 	if err != nil {
@@ -191,18 +352,21 @@ func main() {
 	}
 	fileServer := http.FileServer(http.FS(staticFS))
 
-	// Read and patch index.html to inject server mode config
+	// Read index.html and optionally inject server mode config
 	indexBytes, err := fs.ReadFile(staticFS, "index.html")
 	if err != nil {
 		log.Fatalf("Failed to read index.html: %v", err)
 	}
-	indexHTML := strings.Replace(
-		string(indexBytes),
-		"global = globalThis;",
-		`global = globalThis;
+	indexHTML := string(indexBytes)
+	if absPath != "" {
+		indexHTML = strings.Replace(
+			indexHTML,
+			"global = globalThis;",
+			`global = globalThis;
       globalThis.FOXGLOVE_STUDIO_SERVER = { apiBase: "" };`,
-		1,
-	)
+			1,
+		)
+	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
@@ -226,7 +390,9 @@ func main() {
 	})
 
 	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("Serving MCAP files from: %s", absPath)
+	if absPath != "" {
+		log.Printf("Serving MCAP files from: %s", absPath)
+	}
 
 	if *tlsCert != "" && *tlsKey != "" {
 		log.Printf("Foxglove Studio server starting on https://localhost:%d", *port)

@@ -223,7 +223,11 @@ function FolderView({
   );
 }
 
-export default function McapServerBrowser(): JSX.Element {
+export default function McapServerBrowser({
+  onSwitchView,
+}: {
+  onSwitchView?: () => void;
+}): JSX.Element {
   const { classes } = useStyles();
   const { selectSource } = usePlayerSelection();
   const { dialogActions } = useWorkspaceActions();
@@ -321,9 +325,19 @@ export default function McapServerBrowser(): JSX.Element {
   return (
     <View onOpen={selected.size > 0 ? onOpen : undefined}>
       <Stack className={classes.container} gap={2}>
-        <Typography variant="h3" fontWeight={600} gutterBottom>
-          Browse recordings
-        </Typography>
+        <Stack direction="row" justifyContent="space-between" alignItems="center">
+          <Typography variant="h3" fontWeight={600}>
+            Browse recordings
+          </Typography>
+        </Stack>
+
+        {!loading && files.length > 0 && onSwitchView && (
+          <Stack direction="row" justifyContent="flex-end">
+            <Button size="small" onClick={onSwitchView}>
+              Timeline view
+            </Button>
+          </Stack>
+        )}
 
         {loading && (
           <Stack alignItems="center" padding={4}>

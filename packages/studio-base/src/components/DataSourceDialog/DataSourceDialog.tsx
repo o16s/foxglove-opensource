@@ -4,7 +4,7 @@
 
 import CloseIcon from "@mui/icons-material/Close";
 import { Dialog, IconButton } from "@mui/material";
-import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMountedState } from "react-use";
 import { makeStyles } from "tss-react/mui";
 
@@ -21,6 +21,7 @@ import { AppEvent } from "@foxglove/studio-base/services/IAnalytics";
 
 import Connection from "./Connection";
 import McapServerBrowser from "./McapServerBrowser";
+import McapTimeline from "./McapTimeline";
 import Start from "./Start";
 
 const DataSourceDialogItems = ["start", "file", "demo", "remote", "connection", "server"] as const;
@@ -32,7 +33,10 @@ type DataSourceDialogProps = {
 
 const useStyles = makeStyles()((theme) => ({
   paper: {
-    maxWidth: `calc(min(${theme.breakpoints.values.md}px, 100% - ${theme.spacing(4)}))`,
+    width: `calc(100% - ${theme.spacing(4)})`,
+    height: `calc(100% - ${theme.spacing(4)})`,
+    maxWidth: "none",
+    maxHeight: "none",
   },
   closeButton: {
     position: "absolute",
@@ -50,6 +54,7 @@ export function DataSourceDialog(props: DataSourceDialogProps): JSX.Element {
   const { availableSources, selectSource } = usePlayerSelection();
   const { dialogActions } = useWorkspaceActions();
   const { activeDataSource, item: activeView } = useWorkspaceStore(selectDataSourceDialog);
+  const [serverViewMode, setServerViewMode] = useState<"tree" | "timeline">("timeline");
 
   const isMounted = useMountedState();
 
@@ -116,7 +121,12 @@ export function DataSourceDialog(props: DataSourceDialogProps): JSX.Element {
       case "server":
         return {
           title: "Browse recordings",
-          component: <McapServerBrowser />,
+          component:
+            serverViewMode === "timeline" ? (
+              <McapTimeline onSwitchView={() => { setServerViewMode("tree"); }} />
+            ) : (
+              <McapServerBrowser onSwitchView={() => { setServerViewMode("timeline"); }} />
+            ),
         };
       default:
         return {
@@ -132,7 +142,7 @@ export function DataSourceDialog(props: DataSourceDialogProps): JSX.Element {
       open
       onClose={onModalClose}
       fullWidth
-      maxWidth="lg"
+      maxWidth={false}
       BackdropProps={{ children: backdrop }}
       PaperProps={{
         square: false,
