@@ -54,7 +54,7 @@ const useStyles = makeStyles()((theme) => ({
   },
 }));
 
-const isServerMode = typeof (globalThis as Record<string, unknown>).FOXGLOVE_STUDIO_SERVER === "object";
+const isServerMode = typeof (globalThis as Record<string, unknown>).OCTAVIEW_STUDIO_SERVER === "object";
 
 export default function Start(): JSX.Element {
   const { recentSources, selectRecent } = usePlayerSelection();

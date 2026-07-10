@@ -22,7 +22,7 @@ describe("app state url parser", () => {
   // interprets foxglove:// URLs differently than the browser does.
   describe.each([
     { isDesktop: true, urlBuilder: () => new URL("foxglove://host/open") },
-    { isDesktop: false, urlBuilder: () => new URL("https://studio.foxglove.dev/") },
+    { isDesktop: false, urlBuilder: () => new URL("https://studio.octaview.ai/") },
   ])("url tests", ({ isDesktop, urlBuilder }) => {
     beforeEach(() => mockIsDesktop.mockReturnValue(isDesktop));
     it("rejects non data state urls", () => {
@@ -75,11 +75,11 @@ describe("app state encoding", () => {
         time: undefined,
         ds: "ros1-remote-bagfile",
         dsParams: {
-          url: "http://foxglove.dev/test.bag",
+          url: "http://octaview.ai/test.bag",
         },
       }).href,
     ).toEqual(
-      "http://example.com/?ds=ros1-remote-bagfile&ds.url=http%3A%2F%2Ffoxglove.dev%2Ftest.bag",
+      "http://example.com/?ds=ros1-remote-bagfile&ds.url=http%3A%2F%2Foctaview.ai%2Ftest.bag",
     );
   });
 
@@ -105,7 +105,7 @@ describe("app state encoding", () => {
       {
         time,
         ds: "rosbridge-websocket",
-        dsParams: { url: "ws://foxglove.dev:9090/test.bag", eventId },
+        dsParams: { url: "ws://octaview.ai:9090/test.bag", eventId },
       },
     ])("encodes url state", (state) => {
       const url = state.dsParams?.url;

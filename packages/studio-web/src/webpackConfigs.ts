@@ -152,7 +152,7 @@ export const mainConfig =
     <head>
       <meta charset="utf-8">
       <meta name="apple-mobile-web-app-capable" content="yes">
-      ${htmlWebpackPlugin.options.foxgloveExtraHeadTags}
+      ${htmlWebpackPlugin.options.extraHeadTags}
       <style type="text/css" id="loading-styles">
         body {
           margin: 0;
@@ -172,15 +172,15 @@ export const mainConfig =
     </head>
     <script>
       global = globalThis;
-      globalThis.FOXGLOVE_STUDIO_DEFAULT_LAYOUT = [/*FOXGLOVE_STUDIO_DEFAULT_LAYOUT_PLACEHOLDER*/][0];
+      globalThis.OCTAVIEW_STUDIO_DEFAULT_LAYOUT = [/*OCTAVIEW_STUDIO_DEFAULT_LAYOUT_PLACEHOLDER*/][0];
     </script>
     <body>
       <div id="root"></div>
     </body>
   </html>
   `,
-          foxgloveExtraHeadTags: `
-            <title>Foxglove Studio</title>
+          extraHeadTags: `
+            <title>Octaview Studio</title>
             <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
             <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
             <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png" />

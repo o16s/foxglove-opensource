@@ -42,5 +42,5 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           gitHubToken: ${{ secrets.FOXGLOVEBOT_GITHUB_TOKEN }}
           branch: ${{ github.head_ref || github.ref_name }}
-          projectName: foxglove-studio-oss
+          projectName: octaview-studio
           directory: web/.webpack

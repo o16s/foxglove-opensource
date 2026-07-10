@@ -4,8 +4,8 @@
 
 export const incompatibleLayoutVersion = {
   desktopText:
-    "Dieses Layout wurde mit einer neueren Version von Foxglove Studio erstellt. Bitte aktualisieren Sie auf die neueste Version unter ",
+    "Dieses Layout wurde mit einer neueren Version von Octaview Studio erstellt. Bitte aktualisieren Sie auf die neueste Version unter ",
   title: "Inkompatible Layout-Version",
   webText:
-    "Dieses Layout wurde mit einer neueren Version von Foxglove Studio erstellt. Bitte aktualisieren Sie Ihren Browser.",
+    "Dieses Layout wurde mit einer neueren Version von Octaview Studio erstellt. Bitte aktualisieren Sie Ihren Browser.",
 };

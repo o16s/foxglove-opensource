@@ -6,8 +6,6 @@ import { TypeOptions } from "i18next";
 
 // Generic global translation
 export const general: Partial<TypeOptions["resources"]["general"]> = {
-  // Note that we use the term `Foxglove` as an English word rather than a Japanese
-  // word since it would sound very different - フォックスグローブ (Fokusugorobu).
-  foxglove: "Foxglove",
+  foxglove: "Octaview",
   learnMore: "もっと学ぶ",
 };

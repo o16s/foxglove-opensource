@@ -68,7 +68,7 @@ export function LaunchingInDesktopScreen(): ReactElement {
         style={{ maxWidth: 480 }}
       >
         <Typography align="center" variant="h2" fontWeight={600}>
-          Launching Foxglove Studio…
+          Launching Octaview Studio…
         </Typography>
         <Typography align="center" fontWeight={600}>
           We’ve directed you to the desktop app.
@@ -86,10 +86,10 @@ export function LaunchingInDesktopScreen(): ReactElement {
             <Link
               color="primary"
               underline="hover"
-              href="https://foxglove.dev/download"
+              href="https://octaview.ai/download"
               target="_blank"
             >
-              Download Foxglove Studio
+              Download Octaview Studio
             </Link>
           </Typography>
         </Stack>

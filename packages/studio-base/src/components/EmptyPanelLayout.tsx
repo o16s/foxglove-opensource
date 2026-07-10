@@ -91,7 +91,7 @@ export const EmptyPanelLayout = ({ tabId }: Props): JSX.Element => {
             <Link
               color="primary"
               target="_blank"
-              href="https://docs.foxglove.dev/docs/visualization/layouts"
+              href="https://docs.octaview.ai/docs/visualization/layouts"
             >
               {t("learnMore", { ns: "general" })}
             </Link>

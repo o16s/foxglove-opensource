@@ -123,7 +123,7 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
-		Subject:      pkix.Name{CommonName: "Foxglove Studio"},
+		Subject:      pkix.Name{CommonName: "Octaview Studio"},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(5 * 365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -400,7 +400,7 @@ func main() {
 			indexHTML,
 			"global = globalThis;",
 			`global = globalThis;
-      globalThis.FOXGLOVE_STUDIO_SERVER = { apiBase: "" };`,
+      globalThis.OCTAVIEW_STUDIO_SERVER = { apiBase: "" };`,
 			1,
 		)
 	}
@@ -432,7 +432,7 @@ func main() {
 	}
 
 	if *tlsCert != "" && *tlsKey != "" {
-		log.Printf("Foxglove Studio server starting on https://localhost:%d", *port)
+		log.Printf("Octaview Studio server starting on https://localhost:%d", *port)
 		log.Fatal(http.ListenAndServeTLS(addr, *tlsCert, *tlsKey, mux))
 	} else if *useTLS {
 		cert, err := generateSelfSignedCert()
@@ -440,7 +440,7 @@ func main() {
 			log.Fatalf("Failed to generate self-signed certificate: %v", err)
 		}
 		log.Printf("Generated self-signed TLS certificate (valid 1 year, localhost/127.0.0.1)")
-		log.Printf("Foxglove Studio server starting on https://localhost:%d", *port)
+		log.Printf("Octaview Studio server starting on https://localhost:%d", *port)
 		server := &http.Server{
 			Addr:    addr,
 			Handler: mux,
@@ -450,7 +450,7 @@ func main() {
 		}
 		log.Fatal(server.ListenAndServeTLS("", ""))
 	} else {
-		log.Printf("Foxglove Studio server starting on http://localhost:%d", *port)
+		log.Printf("Octaview Studio server starting on http://localhost:%d", *port)
 		log.Fatal(http.ListenAndServe(addr, mux))
 	}
 }

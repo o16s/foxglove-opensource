@@ -33,8 +33,8 @@ export function IncompatibleLayoutVersionAlert(props: Props): JSX.Element {
         {showDesktopText && (
           <DialogContentText>
             {t("desktopText")}
-            <Link target="_blank" href="https://foxglove.dev/download">
-              https://foxglove.dev/download
+            <Link target="_blank" href="https://octaview.ai/download">
+              https://octaview.ai/download
             </Link>
             .
           </DialogContentText>

@@ -22,8 +22,8 @@ jobs:
 
       - name: Configure git
         run: |
-          git config user.name "Foxglove"
-          git config user.email "contact@foxglove.dev"
+          git config user.name "Octaview"
+          git config user.email "contact@octaview.ai"
 
       - id: bump-version
         uses: foxglove/action-bump-version@v1

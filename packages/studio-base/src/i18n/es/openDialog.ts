@@ -5,7 +5,7 @@
 export const openDialog = {
   canBeShared:
     "Comparta archivos de datos, diseños de visualización y extensiones personalizadas con sus compañeros de equipo",
-  collaborateTitle: "Acelere el desarrollo con Foxglove Data Platform",
+  collaborateTitle: "Acelere el desarrollo con Octaview",
   convenientWebInterface:
     "Use una interfaz web conveniente para etiquetar, buscar y recuperar datos a gran velocidad",
   createAFreeAccount: "Crear una cuenta gratuita",
@@ -17,8 +17,8 @@ export const openDialog = {
   learnMore: "Más información",
   needHelp: "¿Necesita ayuda?",
   needHelpDescription:
-    "Consulte nuestra documentación o vea los tutoriales en el blog de Foxglove.",
-  newToFoxgloveStudio: "¿Nuevo en Foxglove Studio?",
+    "Consulte nuestra documentación o vea los tutoriales en el blog de Octaview.",
+  newToFoxgloveStudio: "¿Nuevo en Octaview Studio?",
   newToFoxgloveStudioDescription:
     "Comience explorando un conjunto de datos de ejemplo o consultando nuestra documentación.",
   openAGitHubIssue: "Abrir un issue en GitHub",
@@ -28,15 +28,15 @@ export const openDialog = {
   openLocalFile: "Abrir archivo local",
   openLocalFileDescription: "Visualice datos directamente desde su sistema de archivos local.",
   openUrl: "Cargar y compartir datos",
-  openUrlDescription: "Use Foxglove Data Platform para compartir datos con su equipo.",
+  openUrlDescription: "Use Octaview para compartir datos con su equipo.",
   recentDataSources: "Fuentes de datos recientes",
   secureStorageOfData: "Almacene petabytes de datos ROS o personalizados de forma segura",
   seeTutorials: "Ver tutoriales",
   shareLayouts: "Compartir diseños",
   signIn: "Iniciar sesión",
-  startCollaborating: "Comience a colaborar con su organización de Foxglove",
+  startCollaborating: "Comience a colaborar con su organización de Octaview",
   startCollaboratingDescription:
-    "Aproveche al máximo su cuenta de Foxglove, ya sea que desee profundizar en sus datos o compartir herramientas con sus compañeros de equipo.",
+    "Aproveche al máximo su cuenta de Octaview, ya sea que desee profundizar en sus datos o compartir herramientas con sus compañeros de equipo.",
   uploadToDataPlatform: "Cargar a Data Platform",
   viewOurDocs: "Ver nuestra documentación",
 };

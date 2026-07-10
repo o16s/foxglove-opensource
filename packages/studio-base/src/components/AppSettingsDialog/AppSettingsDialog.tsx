@@ -143,9 +143,9 @@ const aboutItems = new Map<
     {
       subheader: "External resources",
       links: [
-        ...(isDesktopApp() ? [] : [{ title: "Desktop app", url: "https://foxglove.dev/download" }]),
-        { title: "Browse docs", url: "https://docs.foxglove.dev/docs" },
-        { title: "Join our community", url: "https://foxglove.dev/community" },
+        ...(isDesktopApp() ? [] : [{ title: "Desktop app", url: "https://octaview.ai/download" }]),
+        { title: "Browse docs", url: "https://docs.octaview.ai/docs" },
+        { title: "Join our community", url: "https://octaview.ai/community" },
       ],
     },
   ],
@@ -154,8 +154,7 @@ const aboutItems = new Map<
     {
       subheader: "Products",
       links: [
-        { title: "Foxglove Studio", url: "https://foxglove.dev/studio" },
-        { title: "Foxglove Data Platform", url: "https://foxglove.dev/data-platform" },
+        { title: "Octaview Studio", url: "https://octaview.ai/studio" },
       ],
     },
   ],
@@ -164,8 +163,8 @@ const aboutItems = new Map<
     {
       subheader: "Contact",
       links: [
-        { title: "Give feedback", url: "https://foxglove.dev/contact" },
-        { title: "Schedule a demo", url: "https://foxglove.dev/demo" },
+        { title: "Give feedback", url: "https://octaview.ai/contact" },
+        { title: "Schedule a demo", url: "https://octaview.ai/demo" },
       ],
     },
   ],
@@ -174,8 +173,8 @@ const aboutItems = new Map<
     {
       subheader: "Legal",
       links: [
-        { title: "License terms", url: "https://foxglove.dev/legal/studio-license" },
-        { title: "Privacy policy", url: "https://foxglove.dev/legal/privacy" },
+        { title: "License terms", url: "https://octaview.ai/legal/studio-license" },
+        { title: "Privacy policy", url: "https://octaview.ai/legal/privacy" },
       ],
     },
   ],
@@ -314,7 +313,7 @@ export function AppSettingsDialog(
               </header>
               <Stack direction="row" alignItems="center" gap={1}>
                 <Typography variant="body2">
-                  Foxglove Studio version {FOXGLOVE_STUDIO_VERSION}
+                  Octaview Studio version {FOXGLOVE_STUDIO_VERSION}
                 </Typography>
                 <CopyButton
                   size="small"

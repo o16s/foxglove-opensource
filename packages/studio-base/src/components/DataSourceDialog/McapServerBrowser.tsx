@@ -239,7 +239,7 @@ export default function McapServerBrowser({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const apiBase = useMemo(() => {
-    const serverConfig = (globalThis as Record<string, unknown>).FOXGLOVE_STUDIO_SERVER as
+    const serverConfig = (globalThis as Record<string, unknown>).OCTAVIEW_STUDIO_SERVER as
       | { apiBase?: string }
       | undefined;
     return serverConfig?.apiBase ?? "";

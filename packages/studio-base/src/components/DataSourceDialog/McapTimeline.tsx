@@ -167,8 +167,19 @@ const useStyles = makeStyles()((theme) => ({
     alignItems: "center",
     padding: theme.spacing(0, 1.5),
     borderBottom: `1px solid ${theme.palette.divider}`,
+    cursor: "pointer",
+    userSelect: "none" as const,
+    "&:hover": {
+      backgroundColor: theme.palette.action.hover,
+    },
     "&:last-child": {
       borderBottom: "none",
+    },
+  },
+  labelRowSelected: {
+    backgroundColor: theme.palette.action.selected,
+    "&:hover": {
+      backgroundColor: theme.palette.action.selected,
     },
   },
   svgColumn: {
@@ -256,7 +267,7 @@ export default function McapTimeline(): JSX.Element {
   const [dateInput, setDateInput] = useState("");
 
   const apiBase = useMemo(() => {
-    const serverConfig = (globalThis as Record<string, unknown>).FOXGLOVE_STUDIO_SERVER as
+    const serverConfig = (globalThis as Record<string, unknown>).OCTAVIEW_STUDIO_SERVER as
       | { apiBase?: string }
       | undefined;
     return serverConfig?.apiBase ?? "";
@@ -265,6 +276,21 @@ export default function McapTimeline(): JSX.Element {
   const [files, setFiles] = useState<McapFileIndex[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
+
+  // Row (folder) selection state — unselected by default
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(() => new Set());
+
+  const handleRowClick = useCallback((folderName: string) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderName)) {
+        next.delete(folderName);
+      } else {
+        next.add(folderName);
+      }
+      return next;
+    });
+  }, []);
 
   // Click selection state — fixed 5-minute span
   const [selCenter, setSelCenter] = useState<number | undefined>();
@@ -515,13 +541,18 @@ export default function McapTimeline(): JSX.Element {
   }, [selCenter]);
 
   const selectedFiles = useMemo(() => {
-    if (!selectionRange) {
+    if (!selectionRange || selectedRows.size === 0) {
       return [];
     }
-    return files.filter(
-      (f) => f.startTime < selectionRange.end && f.endTime > selectionRange.start,
-    );
-  }, [files, selectionRange]);
+    return files.filter((f) => {
+      const folder = f.folder || "(root)";
+      return (
+        selectedRows.has(folder) &&
+        f.startTime < selectionRange.end &&
+        f.endTime > selectionRange.start
+      );
+    });
+  }, [files, selectionRange, selectedRows]);
 
   const totalSize = useMemo(
     () => selectedFiles.reduce((sum, f) => sum + f.size, 0),
@@ -824,24 +855,33 @@ export default function McapTimeline(): JSX.Element {
                 Folder
               </Typography>
             </div>
-            {folders.map(([folderName], i) => (
-              <div key={folderName} className={classes.labelRow}>
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    backgroundColor: COLORS[i % COLORS.length],
-                    marginRight: 8,
-                    flexShrink: 0,
-                    display: "inline-block",
-                  }}
-                />
-                <Typography variant="body2" noWrap title={folderName}>
-                  {folderName}
-                </Typography>
-              </div>
-            ))}
+            {folders.map(([folderName], i) => {
+              const isRowSelected = selectedRows.has(folderName);
+              return (
+                <div
+                  key={folderName}
+                  className={`${classes.labelRow} ${isRowSelected ? classes.labelRowSelected : ""}`}
+                  onClick={() => { handleRowClick(folderName); }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      backgroundColor: isRowSelected ? COLORS[i % COLORS.length] : "transparent",
+                      border: `2px solid ${COLORS[i % COLORS.length]!}`,
+                      marginRight: 8,
+                      flexShrink: 0,
+                      display: "inline-block",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <Typography variant="body2" noWrap title={folderName}>
+                    {folderName}
+                  </Typography>
+                </div>
+              );
+            })}
           </div>
 
           {/* Right: SVG timeline */}
@@ -866,16 +906,25 @@ export default function McapTimeline(): JSX.Element {
               />
 
               {/* Row backgrounds */}
-              {folders.map(([folderName], i) => (
-                <rect
-                  key={folderName}
-                  x={0}
-                  y={HEADER_HEIGHT + i * ROW_HEIGHT}
-                  width={svgWidth}
-                  height={ROW_HEIGHT}
-                  fill={i % 2 === 0 ? "transparent" : theme.palette.action.hover}
-                />
-              ))}
+              {folders.map(([folderName], i) => {
+                const isRowSelected = selectedRows.has(folderName);
+                return (
+                  <rect
+                    key={folderName}
+                    x={0}
+                    y={HEADER_HEIGHT + i * ROW_HEIGHT}
+                    width={svgWidth}
+                    height={ROW_HEIGHT}
+                    fill={
+                      isRowSelected
+                        ? theme.palette.action.selected
+                        : i % 2 === 0
+                          ? "transparent"
+                          : theme.palette.action.hover
+                    }
+                  />
+                );
+              })}
 
               {/* Row dividers */}
               {folders.map(([folderName], i) => (
@@ -930,7 +979,9 @@ export default function McapTimeline(): JSX.Element {
 
               {/* File bars */}
               {visibleBars.map((bar) => {
-                const isSelected = selectedPaths.has(bar.file.path);
+                const folderName = folders[bar.folderIdx]![0];
+                const isRowActive = selectedRows.has(folderName);
+                const isFileSelected = selectedPaths.has(bar.file.path);
                 return (
                   <rect
                     key={bar.file.path}
@@ -941,9 +992,9 @@ export default function McapTimeline(): JSX.Element {
                     rx={3}
                     ry={3}
                     fill={bar.color}
-                    opacity={isSelected ? 1 : 0.7}
-                    stroke={isSelected ? theme.palette.common.white : "none"}
-                    strokeWidth={isSelected ? 2 : 0}
+                    opacity={isFileSelected ? 1 : isRowActive ? 0.7 : 0.3}
+                    stroke={isFileSelected ? theme.palette.common.white : "none"}
+                    strokeWidth={isFileSelected ? 2 : 0}
                   />
                 );
               })}

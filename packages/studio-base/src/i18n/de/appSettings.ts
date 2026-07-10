@@ -8,7 +8,7 @@ export const appSettings = {
   askEachTime: "Jedes Mal fragen",
   colorScheme: "Farbschema",
   dark: "Dunkel",
-  debugModeDescription: "Panels und Funktionen zum Debuggen von Foxglove aktivieren",
+  debugModeDescription: "Panels und Funktionen zum Debuggen von Octaview aktivieren",
   desktopApp: "Desktop-App",
   displayTimestampsIn: "Zeitstempel anzeigen in",
   experimentalFeatures: "Experimentelle Funktionen",

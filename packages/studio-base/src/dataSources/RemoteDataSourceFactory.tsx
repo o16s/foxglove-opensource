@@ -50,11 +50,11 @@ class RemoteDataSourceFactory implements IDataSourceFactory {
   public docsLinks = [
     {
       label: "ROS 1",
-      url: "https://docs.foxglove.dev/docs/connecting-to-data/frameworks/ros1#remote-file",
+      url: "https://docs.octaview.ai/docs/connecting-to-data/frameworks/ros1#remote-file",
     },
     {
       label: "MCAP",
-      url: "https://docs.foxglove.dev/docs/connecting-to-data/frameworks/mcap#remote-file",
+      url: "https://docs.octaview.ai/docs/connecting-to-data/frameworks/mcap#remote-file",
     },
   ];
 
@@ -74,7 +74,7 @@ class RemoteDataSourceFactory implements IDataSourceFactory {
   public warning = (
     <>
       Loading large files over HTTP can be slow. For better performance, we recommend{" "}
-      <Link href="https://foxglove.dev/data-platform" target="_blank">
+      <Link href="https://octaview.ai/data-platform" target="_blank">
         Foxglove Data Platform
       </Link>
       .

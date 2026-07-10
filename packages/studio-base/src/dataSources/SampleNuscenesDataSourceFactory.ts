@@ -21,7 +21,7 @@ class SampleNuscenesDataSourceFactory implements IDataSourceFactory {
   public initialize(
     args: DataSourceFactoryInitializeArgs,
   ): ReturnType<IDataSourceFactory["initialize"]> {
-    const bagUrl = "https://assets.foxglove.dev/NuScenes-v1.0-mini-scene-0061-df24c12.mcap";
+    const bagUrl = "https://assets.octaview.ai/NuScenes-v1.0-mini-scene-0061-df24c12.mcap";
 
     const source = new WorkerIterableSource({
       initWorker: () => {

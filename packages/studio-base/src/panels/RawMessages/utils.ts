@@ -127,7 +127,7 @@ export function getChangeCounts(
 
 const foxgloveDocsLinksByDatatype = new Map<string, string>();
 for (const schema of Object.values(foxgloveMessageSchemas)) {
-  const url = `https://docs.foxglove.dev/docs/visualization/message-schemas/${_.kebabCase(
+  const url = `https://docs.octaview.ai/docs/visualization/message-schemas/${_.kebabCase(
     schema.name,
   )}`;
   foxgloveDocsLinksByDatatype.set(`foxglove_msgs/${schema.name}`, url);

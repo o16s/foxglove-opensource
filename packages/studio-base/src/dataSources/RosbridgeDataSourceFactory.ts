@@ -15,7 +15,7 @@ class RosbridgeDataSourceFactory implements IDataSourceFactory {
   public displayName = "Rosbridge";
   public iconName: IDataSourceFactory["iconName"] = "Flow";
   public docsLinks = [
-    { url: "https://docs.foxglove.dev/docs/connecting-to-data/frameworks/ros1#rosbridge" },
+    { url: "https://docs.octaview.ai/docs/connecting-to-data/frameworks/ros1#rosbridge" },
   ];
   public description = "Connect to a ROS 1 or ROS 2 system using the Rosbridge WebSocket protocol.";
 
