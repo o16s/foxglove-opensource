@@ -200,9 +200,10 @@ func main() {
 		var err error
 		indexDB, err = openIndexDB(filepath.Join(absPath, ".foxglove-index.db"))
 		if err != nil {
-			log.Fatalf("Failed to open index database: %v", err)
+			log.Printf("Warning: could not open index database: %v (running without cache)", err)
+		} else {
+			defer indexDB.Close()
 		}
-		defer indexDB.Close()
 	}
 
 	mux := http.NewServeMux()
@@ -218,7 +219,8 @@ func main() {
 		var files []McapFileInfo
 		err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				return err
+				log.Printf("Warning: could not access %s: %v", path, err)
+				return nil
 			}
 			if d.IsDir() {
 				return nil
@@ -319,7 +321,8 @@ func main() {
 
 		err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				return err
+				log.Printf("Warning: could not access %s: %v", path, err)
+				return nil
 			}
 			if d.IsDir() {
 				return nil
@@ -339,12 +342,16 @@ func main() {
 
 			// Check SQLite cache
 			var startNs, endNs uint64
-			err = indexDB.QueryRow(
-				`SELECT start_time, end_time FROM mcap_index WHERE path = ? AND mod_time = ? AND size = ?`,
-				relPath, modTimeStr, info.Size(),
-			).Scan(&startNs, &endNs)
+			cacheHit := false
+			if indexDB != nil {
+				err = indexDB.QueryRow(
+					`SELECT start_time, end_time FROM mcap_index WHERE path = ? AND mod_time = ? AND size = ?`,
+					relPath, modTimeStr, info.Size(),
+				).Scan(&startNs, &endNs)
+				cacheHit = err == nil
+			}
 
-			if err != nil {
+			if !cacheHit {
 				// Cache miss — read time range from MCAP summary
 				startNs, endNs, err = getMcapTimeRange(path)
 				if err != nil {
@@ -353,12 +360,14 @@ func main() {
 				}
 
 				// Upsert into SQLite cache
-				_, err = indexDB.Exec(
-					`INSERT OR REPLACE INTO mcap_index (path, mod_time, size, start_time, end_time) VALUES (?, ?, ?, ?, ?)`,
-					relPath, modTimeStr, info.Size(), startNs, endNs,
-				)
-				if err != nil {
-					log.Printf("Warning: could not cache index for %s: %v", relPath, err)
+				if indexDB != nil {
+					_, err = indexDB.Exec(
+						`INSERT OR REPLACE INTO mcap_index (path, mod_time, size, start_time, end_time) VALUES (?, ?, ?, ?, ?)`,
+						relPath, modTimeStr, info.Size(), startNs, endNs,
+					)
+					if err != nil {
+						log.Printf("Warning: could not cache index for %s: %v", relPath, err)
+					}
 				}
 			}
 
@@ -383,8 +392,9 @@ func main() {
 		}
 
 		// Delete stale entries for files that no longer exist
-		rows, err := indexDB.Query(`SELECT path FROM mcap_index`)
-		if err == nil {
+		if indexDB == nil {
+			// no cache — skip cleanup
+		} else if rows, err := indexDB.Query(`SELECT path FROM mcap_index`); err == nil {
 			var stalePaths []string
 			for rows.Next() {
 				var p string
