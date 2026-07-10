@@ -18,6 +18,7 @@ import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/use
 import { AppEvent } from "@foxglove/studio-base/services/IAnalytics";
 
 import { FormField } from "./FormField";
+import { ScanQrButton } from "./QrScanner";
 import View from "./View";
 
 const useStyles = makeStyles()((theme) => ({
@@ -127,6 +128,8 @@ export default function Connection(): JSX.Element {
 
   const [fieldErrors, setFieldErrors] = useState(new Map<string, string>());
   const [fieldValues, setFieldValues] = useState<Record<string, string | undefined>>({});
+  // Counter to force form re-mount when QR fills values
+  const [formResetKey, setFormResetKey] = useState(0);
 
   useLayoutEffect(() => {
     const connectionIdx = connectionSources.findIndex((source) => source === activeDataSource);
@@ -174,6 +177,15 @@ export default function Connection(): JSX.Element {
     [disableOpen, onOpen],
   );
 
+  // QR code scan handler — fills IP and token fields
+  const handleQrScan = useCallback((data: { ip: string; token: string }) => {
+    setFieldValues((prev) => ({ ...prev, ip: data.ip, token: data.token }));
+    setFieldErrors(new Map());
+    setFormResetKey((k) => k + 1);
+  }, []);
+
+  const isEdgeHub = selectedSource?.id === "octaview-edge-hub";
+
   return (
     <View onOpen={disableOpen ? undefined : onOpen}>
       <Stack className={classes.grid} data-testid="OpenConnection">
@@ -212,7 +224,7 @@ export default function Connection(): JSX.Element {
           </Tabs>
         </div>
 
-        <Stack className={classes.form} key={selectedSource?.id} flex="1 0">
+        <Stack className={classes.form} key={`${selectedSource?.id}-${formResetKey}`} flex="1 0">
           <form onSubmit={onSubmit}>
             <Stack className={classes.formInner} gap={2}>
               {selectedSource?.disabledReason == undefined &&
@@ -230,7 +242,10 @@ export default function Connection(): JSX.Element {
                     {selectedSource.formConfig.fields.map((field) => (
                       <FormField
                         key={field.id}
-                        field={field}
+                        field={{
+                          ...field,
+                          defaultValue: fieldValues[field.id] ?? field.defaultValue,
+                        }}
                         disabled={selectedSource.disabledReason != undefined}
                         onError={(err) => {
                           setFieldErrors((existing) => {
@@ -252,6 +267,7 @@ export default function Connection(): JSX.Element {
                         }}
                       />
                     ))}
+                    {isEdgeHub && <ScanQrButton onScan={handleQrScan} />}
                   </Stack>
                 </Stack>
               )}
