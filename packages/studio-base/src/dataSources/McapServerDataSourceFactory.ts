@@ -9,6 +9,17 @@ import {
 import { IterablePlayer, WorkerIterableSource } from "@foxglove/studio-base/players/IterablePlayer";
 import { Player } from "@foxglove/studio-base/players/types";
 
+// Module-level store for pre-downloaded files passed from McapTimeline
+const pendingDownloads = new Map<string, File[]>();
+
+/**
+ * Store downloaded files so the factory can pick them up by ID.
+ * Called by McapTimeline after sequential download completes.
+ */
+export function storeDownloadedFiles(id: string, files: File[]): void {
+  pendingDownloads.set(id, files);
+}
+
 class McapServerDataSourceFactory implements IDataSourceFactory {
   public id = "mcap-server";
   public type: IDataSourceFactory["type"] = "connection";
@@ -18,6 +29,41 @@ class McapServerDataSourceFactory implements IDataSourceFactory {
   public hidden = true; // Hidden from the Connection tab; accessed via "Browse recordings" button
 
   public initialize(args: DataSourceFactoryInitializeArgs): Player | undefined {
+    const initWorker = () => {
+      return new Worker(
+        // foxglove-depcheck-used: babel-plugin-transform-import-meta
+        new URL(
+          "@foxglove/studio-base/players/IterablePlayer/Mcap/McapIterableSourceWorker.worker",
+          import.meta.url,
+        ),
+      );
+    };
+
+    // Check for pre-downloaded files first
+    const downloadId = args.params?.downloadId;
+    if (downloadId) {
+      const files = pendingDownloads.get(downloadId);
+      pendingDownloads.delete(downloadId);
+      if (files && files.length > 0) {
+        const name = files.length === 1
+          ? (files[0]!.name)
+          : `${files.length} files`;
+
+        const source = new WorkerIterableSource({
+          initWorker,
+          initArgs: files.length === 1 ? { file: files[0] } : { files },
+        });
+
+        return new IterablePlayer({
+          metricsCollector: args.metricsCollector,
+          source,
+          name,
+          sourceId: this.id,
+        });
+      }
+    }
+
+    // Fallback: URL-based loading (for backward compatibility)
     const urlsParam = args.params?.urls;
     if (!urlsParam) {
       return;
@@ -32,16 +78,6 @@ class McapServerDataSourceFactory implements IDataSourceFactory {
     if (urls.length === 0) {
       return;
     }
-
-    const initWorker = () => {
-      return new Worker(
-        // foxglove-depcheck-used: babel-plugin-transform-import-meta
-        new URL(
-          "@foxglove/studio-base/players/IterablePlayer/Mcap/McapIterableSourceWorker.worker",
-          import.meta.url,
-        ),
-      );
-    };
 
     const name = urls.length === 1
       ? decodeURIComponent(urls[0]!.split("/").pop() ?? urls[0]!)

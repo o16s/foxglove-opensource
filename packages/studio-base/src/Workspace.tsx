@@ -154,11 +154,18 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
 
   const { workspaceExtensions = [] } = useAppContext();
 
-  // When a player is activated, hide the open dialog.
+  // When a player is first activated, hide the open dialog.
+  const prevPlayerPresence = useRef(playerPresence);
   useLayoutEffect(() => {
+    const wasAbsent =
+      prevPlayerPresence.current !== PlayerPresence.PRESENT &&
+      prevPlayerPresence.current !== PlayerPresence.INITIALIZING;
+    prevPlayerPresence.current = playerPresence;
+
     if (
-      playerPresence === PlayerPresence.PRESENT ||
-      playerPresence === PlayerPresence.INITIALIZING
+      wasAbsent &&
+      (playerPresence === PlayerPresence.PRESENT ||
+        playerPresence === PlayerPresence.INITIALIZING)
     ) {
       dialogActions.dataSource.close();
     }

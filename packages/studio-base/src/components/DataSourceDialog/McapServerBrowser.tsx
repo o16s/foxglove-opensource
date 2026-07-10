@@ -261,9 +261,10 @@ export default function McapServerBrowser({
   }, [tree]);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setError(undefined);
-    fetch(`${apiBase}/api/mcap/files`)
+    fetch(`${apiBase}/api/mcap/files`, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
@@ -275,9 +276,13 @@ export default function McapServerBrowser({
         setLoading(false);
       })
       .catch((err: Error) => {
+        if (err.name === "AbortError") {
+          return;
+        }
         setError(err.message);
         setLoading(false);
       });
+    return () => { controller.abort(); };
   }, [apiBase]);
 
   const toggleFile = useCallback((path: string) => {

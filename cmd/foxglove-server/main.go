@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -18,12 +19,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/foxglove/mcap/go/mcap"
+	_ "modernc.org/sqlite"
 )
 
 //go:embed dist/*
@@ -45,17 +45,26 @@ type McapFileIndex struct {
 	Size      int64   `json:"size"`
 }
 
-type indexCacheEntry struct {
-	modTime   time.Time
-	size      int64
-	startTime uint64 // nanoseconds
-	endTime   uint64 // nanoseconds
+// openIndexDB opens (or creates) a SQLite database at dbPath and ensures
+// the mcap_index table exists. The returned *sql.DB is safe for concurrent use.
+func openIndexDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open index db: %w", err)
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS mcap_index (
+		path       TEXT PRIMARY KEY,
+		mod_time   TEXT NOT NULL,
+		size       INTEGER NOT NULL,
+		start_time INTEGER NOT NULL,
+		end_time   INTEGER NOT NULL
+	)`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create index table: %w", err)
+	}
+	return db, nil
 }
-
-var (
-	indexCache   = make(map[string]*indexCacheEntry)
-	indexCacheMu sync.Mutex
-)
 
 // getMcapTimeRange reads the summary section of an MCAP file to extract
 // message start/end timestamps. This is O(1) — it seeks to the footer
@@ -99,146 +108,6 @@ func getMcapTimeRange(path string) (startNs, endNs uint64, err error) {
 	}
 
 	return 0, 0, fmt.Errorf("no statistics or chunk indexes found")
-}
-
-type timestampedMsg struct {
-	logTime   uint64
-	channelID uint16
-	data      []byte
-}
-
-// mergeMcapFiles merges multiple MCAP files into a single output file.
-// Files are assumed to be roughly sequential. Messages are written in
-// log-time order using a simple merge across all source iterators.
-func mergeMcapFiles(outputPath string, inputPaths []string) error {
-	outFile, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("create output: %w", err)
-	}
-	defer outFile.Close()
-
-	writer, err := mcap.NewWriter(outFile, &mcap.WriterOptions{
-		Chunked: true,
-	})
-	if err != nil {
-		return fmt.Errorf("create writer: %w", err)
-	}
-
-	if err := writer.WriteHeader(&mcap.Header{Profile: ""}); err != nil {
-		return fmt.Errorf("write header: %w", err)
-	}
-
-	// Track schema/channel ID remapping across files
-	schemaMap := make(map[string]uint16)  // key: sourceFile+origID -> newID
-	channelMap := make(map[string]uint16) // key: sourceFile+origID -> newID
-	var nextSchemaID uint16 = 1
-	var nextChannelID uint16 = 1
-
-	var allMessages []timestampedMsg
-
-	for fileIdx, inputPath := range inputPaths {
-		f, err := os.Open(inputPath)
-		if err != nil {
-			return fmt.Errorf("open %s: %w", inputPath, err)
-		}
-
-		reader, err := mcap.NewReader(f)
-		if err != nil {
-			f.Close()
-			return fmt.Errorf("read %s: %w", inputPath, err)
-		}
-
-		it, err := reader.Messages()
-		if err != nil {
-			reader.Close()
-			f.Close()
-			return fmt.Errorf("messages %s: %w", inputPath, err)
-		}
-
-		err = mcap.Range(it, func(schema *mcap.Schema, channel *mcap.Channel, message *mcap.Message) error {
-			filePrefix := fmt.Sprintf("%d:", fileIdx)
-
-			// Remap schema
-			schemaKey := filePrefix + fmt.Sprintf("%d", schema.ID)
-			newSchemaID, ok := schemaMap[schemaKey]
-			if !ok {
-				newSchemaID = nextSchemaID
-				nextSchemaID++
-				schemaMap[schemaKey] = newSchemaID
-				if err := writer.WriteSchema(&mcap.Schema{
-					ID:       newSchemaID,
-					Name:     schema.Name,
-					Encoding: schema.Encoding,
-					Data:     schema.Data,
-				}); err != nil {
-					return fmt.Errorf("write schema: %w", err)
-				}
-			}
-
-			// Remap channel
-			channelKey := filePrefix + fmt.Sprintf("%d", channel.ID)
-			newChannelID, ok := channelMap[channelKey]
-			if !ok {
-				newChannelID = nextChannelID
-				nextChannelID++
-				channelMap[channelKey] = newChannelID
-				if err := writer.WriteChannel(&mcap.Channel{
-					ID:              newChannelID,
-					SchemaID:        newSchemaID,
-					Topic:           channel.Topic,
-					MessageEncoding: channel.MessageEncoding,
-					Metadata:        channel.Metadata,
-				}); err != nil {
-					return fmt.Errorf("write channel: %w", err)
-				}
-			}
-
-			// Buffer message
-			dataCopy := make([]byte, len(message.Data))
-			copy(dataCopy, message.Data)
-			allMessages = append(allMessages, timestampedMsg{
-				logTime:   message.LogTime,
-				channelID: newChannelID,
-				data:      dataCopy,
-			})
-			return nil
-		})
-
-		reader.Close()
-		f.Close()
-
-		if err != nil {
-			return fmt.Errorf("iterate %s: %w", inputPath, err)
-		}
-	}
-
-	// Sort by log time
-	sortMessages(allMessages)
-
-	// Write sorted messages
-	for i := range allMessages {
-		msg := &allMessages[i]
-		if err := writer.WriteMessage(&mcap.Message{
-			ChannelID:   msg.channelID,
-			Sequence:    uint32(i),
-			LogTime:     msg.logTime,
-			PublishTime: msg.logTime,
-			Data:        msg.data,
-		}); err != nil {
-			return fmt.Errorf("write message: %w", err)
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("close writer: %w", err)
-	}
-	return nil
-}
-
-func sortMessages(msgs []timestampedMsg) {
-	sort.Slice(msgs, func(i, j int) bool {
-		return msgs[i].logTime < msgs[j].logTime
-	})
 }
 
 func generateSelfSignedCert() (tls.Certificate, error) {
@@ -294,6 +163,16 @@ func main() {
 		if err != nil || !info.IsDir() {
 			log.Fatalf("Not a valid directory: %s", absPath)
 		}
+	}
+
+	var indexDB *sql.DB
+	if absPath != "" {
+		var err error
+		indexDB, err = openIndexDB(filepath.Join(absPath, ".foxglove-index.db"))
+		if err != nil {
+			log.Fatalf("Failed to open index database: %v", err)
+		}
+		defer indexDB.Close()
 	}
 
 	mux := http.NewServeMux()
@@ -406,6 +285,8 @@ func main() {
 		}
 
 		var results []McapFileIndex
+		seenPaths := make(map[string]struct{})
+
 		err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -422,40 +303,34 @@ func main() {
 				return nil
 			}
 			relPath, _ := filepath.Rel(absPath, path)
+			seenPaths[relPath] = struct{}{}
 
-			// Check cache
-			indexCacheMu.Lock()
-			cached, ok := indexCache[relPath]
-			if ok && cached.modTime.Equal(info.ModTime()) && cached.size == info.Size() {
-				results = append(results, McapFileIndex{
-					Path:      relPath,
-					Folder:    filepath.Dir(relPath),
-					Filename:  d.Name(),
-					StartTime: float64(cached.startTime) / 1e9,
-					EndTime:   float64(cached.endTime) / 1e9,
-					Size:      info.Size(),
-				})
-				indexCacheMu.Unlock()
-				return nil
-			}
-			indexCacheMu.Unlock()
+			modTimeStr := info.ModTime().UTC().Format(time.RFC3339)
 
-			// Read time range from MCAP summary
-			startNs, endNs, err := getMcapTimeRange(path)
+			// Check SQLite cache
+			var startNs, endNs uint64
+			err = indexDB.QueryRow(
+				`SELECT start_time, end_time FROM mcap_index WHERE path = ? AND mod_time = ? AND size = ?`,
+				relPath, modTimeStr, info.Size(),
+			).Scan(&startNs, &endNs)
+
 			if err != nil {
-				log.Printf("Warning: could not index %s: %v", relPath, err)
-				return nil
-			}
+				// Cache miss — read time range from MCAP summary
+				startNs, endNs, err = getMcapTimeRange(path)
+				if err != nil {
+					log.Printf("Warning: could not index %s: %v", relPath, err)
+					return nil
+				}
 
-			// Update cache
-			indexCacheMu.Lock()
-			indexCache[relPath] = &indexCacheEntry{
-				modTime:   info.ModTime(),
-				size:      info.Size(),
-				startTime: startNs,
-				endTime:   endNs,
+				// Upsert into SQLite cache
+				_, err = indexDB.Exec(
+					`INSERT OR REPLACE INTO mcap_index (path, mod_time, size, start_time, end_time) VALUES (?, ?, ?, ?, ?)`,
+					relPath, modTimeStr, info.Size(), startNs, endNs,
+				)
+				if err != nil {
+					log.Printf("Warning: could not cache index for %s: %v", relPath, err)
+				}
 			}
-			indexCacheMu.Unlock()
 
 			folder := filepath.Dir(relPath)
 			if folder == "." {
@@ -476,6 +351,26 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		// Delete stale entries for files that no longer exist
+		rows, err := indexDB.Query(`SELECT path FROM mcap_index`)
+		if err == nil {
+			var stalePaths []string
+			for rows.Next() {
+				var p string
+				if err := rows.Scan(&p); err != nil {
+					continue
+				}
+				if _, exists := seenPaths[p]; !exists {
+					stalePaths = append(stalePaths, p)
+				}
+			}
+			rows.Close()
+			for _, p := range stalePaths {
+				indexDB.Exec(`DELETE FROM mcap_index WHERE path = ?`, p)
+			}
+		}
+
 		if results == nil {
 			results = []McapFileIndex{}
 		}
@@ -485,120 +380,6 @@ func main() {
 		json.NewEncoder(w).Encode(results)
 	})
 
-	// API: merge MCAP files into a single file
-	mux.HandleFunc("/api/mcap/merge", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var req struct {
-			Paths []string `json:"paths"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-		if len(req.Paths) == 0 {
-			http.Error(w, "No files specified", http.StatusBadRequest)
-			return
-		}
-
-		// Validate all paths are within the mcap directory
-		var fullPaths []string
-		for _, relPath := range req.Paths {
-			cleanPath := filepath.Clean(relPath)
-			if strings.Contains(cleanPath, "..") {
-				http.Error(w, "Invalid path", http.StatusBadRequest)
-				return
-			}
-			fullPath := filepath.Join(absPath, cleanPath)
-			if !strings.HasPrefix(fullPath, absPath) {
-				http.Error(w, "Invalid path", http.StatusBadRequest)
-				return
-			}
-			fullPaths = append(fullPaths, fullPath)
-		}
-
-		// Create temp file for merged output
-		tmpFile, err := os.CreateTemp("", "foxglove-merge-*.mcap")
-		if err != nil {
-			http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
-			return
-		}
-		tmpPath := tmpFile.Name()
-		tmpFile.Close()
-
-		log.Printf("Merging %d files into %s", len(fullPaths), tmpPath)
-		startTime := time.Now()
-
-		if err := mergeMcapFiles(tmpPath, fullPaths); err != nil {
-			os.Remove(tmpPath)
-			log.Printf("Merge failed: %v", err)
-			http.Error(w, fmt.Sprintf("Merge failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		log.Printf("Merge complete in %v", time.Since(startTime))
-
-		// Clean up temp file after 1 hour
-		go func() {
-			time.Sleep(1 * time.Hour)
-			os.Remove(tmpPath)
-			log.Printf("Cleaned up temp merge file: %s", tmpPath)
-		}()
-
-		// Return the URL to serve the merged file
-		mergeID := filepath.Base(tmpPath)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(map[string]string{
-			"url": "/api/mcap/merged/" + mergeID,
-		})
-	})
-
-	// API: serve merged MCAP files
-	mux.HandleFunc("/api/mcap/merged/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Range")
-			w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		mergeID := strings.TrimPrefix(r.URL.Path, "/api/mcap/merged/")
-		if mergeID == "" || strings.Contains(mergeID, "/") || strings.Contains(mergeID, "..") {
-			http.Error(w, "Invalid merge ID", http.StatusBadRequest)
-			return
-		}
-
-		tmpPath := filepath.Join(os.TempDir(), mergeID)
-		f, err := os.Open(tmpPath)
-		if err != nil {
-			http.Error(w, "Merged file not found", http.StatusNotFound)
-			return
-		}
-		defer f.Close()
-
-		stat, err := f.Stat()
-		if err != nil {
-			http.Error(w, "File not found", http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
-		http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
-	})
 	} // end if absPath != ""
 
 	// Serve embedded static files (the Foxglove web app)

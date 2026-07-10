@@ -830,12 +830,14 @@ export class IterablePlayer implements Player {
         : 20;
     this.#lastTickMillis = tickTime;
 
-    // Read at most 300ms worth of messages, otherwise things can get out of control if rendering
-    // is very slow. Also, smooth over the range that we request, so that a single slow frame won't
-    // cause the next frame to also be unnecessarily slow by increasing the frame size.
-    let rangeMillis = Math.min(durationMillis * this.#speed, 300);
+    // Read at most a capped range of messages per tick. The cap scales with playback speed so that
+    // high-speed playback (e.g. 1000x+) can actually advance proportionally faster.
+    const rangeCap = Math.max(300, this.#speed * 30);
+    let rangeMillis = Math.min(durationMillis * this.#speed, rangeCap);
     if (this.#lastRangeMillis != undefined) {
-      rangeMillis = this.#lastRangeMillis * 0.9 + rangeMillis * 0.1;
+      // Smooth less aggressively at high speeds so acceleration isn't sluggish
+      const alpha = this.#speed > 10 ? 0.5 : 0.1;
+      rangeMillis = this.#lastRangeMillis * (1 - alpha) + rangeMillis * alpha;
     }
     this.#lastRangeMillis = rangeMillis;
 
@@ -1059,10 +1061,11 @@ export class IterablePlayer implements Player {
         }
 
         const time = Date.now() - start;
-        // make sure we've slept at least 16 millis or so (aprox 1 frame)
-        // to give the UI some time to breathe and not burn in a tight loop
-        if (time < 16) {
-          await delay(16 - time);
+        // At normal speeds, sleep ~16ms (1 frame) to give the UI time to breathe.
+        // At high speeds (>10x), reduce the minimum to allow faster throughput.
+        const minFrameMs = this.#speed > 10 ? 4 : 16;
+        if (time < minFrameMs) {
+          await delay(minFrameMs - time);
         }
       }
     } catch (err) {

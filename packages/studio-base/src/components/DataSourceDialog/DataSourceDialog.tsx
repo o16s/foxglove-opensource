@@ -4,7 +4,7 @@
 
 import CloseIcon from "@mui/icons-material/Close";
 import { Dialog, IconButton } from "@mui/material";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { useMountedState } from "react-use";
 import { makeStyles } from "tss-react/mui";
 
@@ -20,7 +20,6 @@ import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/use
 import { AppEvent } from "@foxglove/studio-base/services/IAnalytics";
 
 import Connection from "./Connection";
-import McapServerBrowser from "./McapServerBrowser";
 import McapTimeline from "./McapTimeline";
 import Start from "./Start";
 
@@ -54,8 +53,6 @@ export function DataSourceDialog(props: DataSourceDialogProps): JSX.Element {
   const { availableSources, selectSource } = usePlayerSelection();
   const { dialogActions } = useWorkspaceActions();
   const { activeDataSource, item: activeView } = useWorkspaceStore(selectDataSourceDialog);
-  const [serverViewMode, setServerViewMode] = useState<"tree" | "timeline">("timeline");
-
   const isMounted = useMountedState();
 
   const firstSampleSource = useMemo(() => {
@@ -121,12 +118,7 @@ export function DataSourceDialog(props: DataSourceDialogProps): JSX.Element {
       case "server":
         return {
           title: "Browse recordings",
-          component:
-            serverViewMode === "timeline" ? (
-              <McapTimeline onSwitchView={() => { setServerViewMode("tree"); }} />
-            ) : (
-              <McapServerBrowser onSwitchView={() => { setServerViewMode("timeline"); }} />
-            ),
+          component: <McapTimeline />,
         };
       default:
         return {
