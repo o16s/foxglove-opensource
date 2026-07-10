@@ -493,8 +493,19 @@ export default function Workspace(props: WorkspaceProps): JSX.Element {
 
   const isPlayerPresent = useMessagePipeline(selectPlayerIsPresent);
 
-  const initialItem: undefined | DataSourceDialogItem =
-    isPlayerPresent || !showOpenDialogOnStartup ? undefined : "start";
+  const initialItem: undefined | DataSourceDialogItem = useMemo(() => {
+    if (isPlayerPresent || !showOpenDialogOnStartup) {
+      return undefined;
+    }
+    // Auto-open recordings view when URL has ?view=recordings
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("view") === "recordings") {
+        return "server";
+      }
+    }
+    return "start";
+  }, [isPlayerPresent, showOpenDialogOnStartup]);
 
   const initialState: Pick<WorkspaceContextStore, "dialogs"> = {
     dialogs: {

@@ -32,6 +32,50 @@ type McapFileIndex = {
   size: number;
 };
 
+type Incident = {
+  time: string; // ISO 8601
+  summary?: string;
+  severity?: "critical" | "error" | "warning" | "info";
+  dedup_key?: string;
+  source?: string;
+};
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: "#E5484D",
+  error: "#FF5C00",
+  warning: "#F5B82E",
+  info: "#3E63DD",
+};
+
+const INCIDENT_ROW_HEIGHT = 28;
+
+function parseUrlIncidents(): { centerTime?: number; incidents: Incident[] } {
+  if (typeof window === "undefined") {
+    return { incidents: [] };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const tParam = params.get("t");
+  const incParam = params.get("incidents");
+
+  const centerTime = tParam ? Number(tParam) : undefined;
+  let incidents: Incident[] = [];
+
+  if (incParam) {
+    try {
+      incidents = JSON.parse(atob(incParam)) as Incident[];
+    } catch {
+      // Try URL-decoded JSON as fallback
+      try {
+        incidents = JSON.parse(incParam) as Incident[];
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return { centerTime: centerTime != null && !isNaN(centerTime) ? centerTime : undefined, incidents };
+}
+
 type ViewMode = "day" | "week" | "month";
 
 type DownloadProgress = {
@@ -299,10 +343,24 @@ export default function McapTimeline(): JSX.Element {
 
   // Hover tooltip state
   const [tooltipState, setTooltipState] = useState<{
-    file: McapFileIndex;
+    file?: McapFileIndex;
+    incident?: Incident & { timeSec: number };
     x: number;
     y: number;
   } | null>(null);
+
+  // URL-driven incidents
+  const urlParams = useMemo(() => parseUrlIncidents(), []);
+  const incidents = urlParams.incidents;
+  const hasIncidents = incidents.length > 0;
+
+  // Convert incident times to unix seconds for rendering
+  const incidentMarkers = useMemo(() => {
+    return incidents.map((inc) => ({
+      ...inc,
+      timeSec: new Date(inc.time).getTime() / 1000,
+    }));
+  }, [incidents]);
 
   // Download state
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | undefined>();
@@ -361,22 +419,35 @@ export default function McapTimeline(): JSX.Element {
     return undefined;
   }, [viewDuration]);
 
-  // Auto-fit: center view on data when files load
+  // Auto-fit: center view on data when files load, or on URL center time
   const hasAutoFit = useRef(false);
   useEffect(() => {
     if (files.length === 0 || hasAutoFit.current) {
       return;
     }
     hasAutoFit.current = true;
-    const minTime = Math.min(...files.map((f) => f.startTime));
-    const maxTime = Math.max(...files.map((f) => f.endTime));
-    const dataCenter = (minTime + maxTime) / 2;
-    setViewStart(dataCenter - viewDuration / 2);
-  }, [files, viewDuration]);
 
-  // SVG dimensions
+    if (urlParams.centerTime != null) {
+      // URL-driven: zoom to 5-minute window around the specified time
+      const dur = SELECTION_SPAN * 2; // 10 min visible, 5 min selection centered
+      setViewDuration(dur);
+      setViewStart(urlParams.centerTime - dur / 2);
+      setSelCenter(urlParams.centerTime);
+      // Auto-select all rows so files in the window are immediately selected
+      const allFolders = new Set(files.map((f) => f.folder || "(root)"));
+      setSelectedRows(allFolders);
+    } else {
+      const minTime = Math.min(...files.map((f) => f.startTime));
+      const maxTime = Math.max(...files.map((f) => f.endTime));
+      const dataCenter = (minTime + maxTime) / 2;
+      setViewStart(dataCenter - viewDuration / 2);
+    }
+  }, [files, viewDuration, urlParams.centerTime]);
+
+  // SVG dimensions — add an incident row at top when incidents are present
   const svgWidth = 1200;
-  const svgHeight = HEADER_HEIGHT + folders.length * ROW_HEIGHT;
+  const incidentRowOffset = hasIncidents ? INCIDENT_ROW_HEIGHT : 0;
+  const svgHeight = HEADER_HEIGHT + incidentRowOffset + folders.length * ROW_HEIGHT;
 
   // Time-to-pixel conversion
   const timeToX = useCallback(
@@ -390,7 +461,7 @@ export default function McapTimeline(): JSX.Element {
     for (let folderIdx = 0; folderIdx < folders.length; folderIdx++) {
       const [, folderFiles] = folders[folderIdx]!;
       const color = COLORS[folderIdx % COLORS.length]!;
-      const rowY = HEADER_HEIGHT + folderIdx * ROW_HEIGHT + BAR_Y_OFFSET;
+      const rowY = HEADER_HEIGHT + incidentRowOffset + folderIdx * ROW_HEIGHT + BAR_Y_OFFSET;
 
       for (const file of folderFiles) {
         if (file.endTime < viewStart || file.startTime > viewEnd) {
@@ -477,7 +548,7 @@ export default function McapTimeline(): JSX.Element {
       }
       const rect = svg.getBoundingClientRect();
       const y = e.clientY - rect.top;
-      if (y < HEADER_HEIGHT) {
+      if (y < HEADER_HEIGHT + incidentRowOffset) {
         return;
       }
       const x = e.clientX - rect.left;
@@ -490,7 +561,7 @@ export default function McapTimeline(): JSX.Element {
         }
       });
     },
-    [viewStart, viewDuration, svgWidth, selCenter],
+    [viewStart, viewDuration, svgWidth, selCenter, incidentRowOffset],
   );
 
   // Hover handler — hit-test visible bars
@@ -506,6 +577,25 @@ export default function McapTimeline(): JSX.Element {
       const mx = e.clientX - svgRect.left;
       const my = e.clientY - svgRect.top;
 
+      const wrapperRect = wrapper.getBoundingClientRect();
+
+      // Check incident markers first
+      if (hasIncidents) {
+        const incidentY = HEADER_HEIGHT + INCIDENT_ROW_HEIGHT / 2;
+        for (const inc of incidentMarkers) {
+          const ix = timeToX(inc.timeSec);
+          const dist = Math.sqrt((mx - ix) ** 2 + (my - incidentY) ** 2);
+          if (dist <= 10) {
+            setTooltipState({
+              incident: inc,
+              x: e.clientX - wrapperRect.left + 12,
+              y: e.clientY - wrapperRect.top - 10,
+            });
+            return;
+          }
+        }
+      }
+
       let found: McapFileIndex | undefined;
       for (const bar of visibleBars) {
         if (mx >= bar.x && mx <= bar.x + bar.width && my >= bar.y && my <= bar.y + BAR_HEIGHT) {
@@ -515,7 +605,6 @@ export default function McapTimeline(): JSX.Element {
       }
 
       if (found) {
-        const wrapperRect = wrapper.getBoundingClientRect();
         setTooltipState({
           file: found,
           x: e.clientX - wrapperRect.left + 12,
@@ -525,7 +614,7 @@ export default function McapTimeline(): JSX.Element {
         setTooltipState(null);
       }
     },
-    [visibleBars],
+    [visibleBars, hasIncidents, incidentMarkers, timeToX],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -855,6 +944,27 @@ export default function McapTimeline(): JSX.Element {
                 Folder
               </Typography>
             </div>
+            {hasIncidents && (
+              <div
+                className={classes.labelRow}
+                style={{ height: INCIDENT_ROW_HEIGHT, cursor: "default" }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    backgroundColor: "#E5484D",
+                    marginRight: 8,
+                    flexShrink: 0,
+                    display: "inline-block",
+                  }}
+                />
+                <Typography variant="body2" noWrap fontWeight={600}>
+                  Incidents
+                </Typography>
+              </div>
+            )}
             {folders.map(([folderName], i) => {
               const isRowSelected = selectedRows.has(folderName);
               return (
@@ -905,6 +1015,17 @@ export default function McapTimeline(): JSX.Element {
                 fill={theme.palette.action.hover}
               />
 
+              {/* Incidents row background */}
+              {hasIncidents && (
+                <rect
+                  x={0}
+                  y={HEADER_HEIGHT}
+                  width={svgWidth}
+                  height={INCIDENT_ROW_HEIGHT}
+                  fill={theme.palette.action.hover}
+                />
+              )}
+
               {/* Row backgrounds */}
               {folders.map(([folderName], i) => {
                 const isRowSelected = selectedRows.has(folderName);
@@ -912,7 +1033,7 @@ export default function McapTimeline(): JSX.Element {
                   <rect
                     key={folderName}
                     x={0}
-                    y={HEADER_HEIGHT + i * ROW_HEIGHT}
+                    y={HEADER_HEIGHT + incidentRowOffset + i * ROW_HEIGHT}
                     width={svgWidth}
                     height={ROW_HEIGHT}
                     fill={
@@ -926,14 +1047,26 @@ export default function McapTimeline(): JSX.Element {
                 );
               })}
 
+              {/* Incidents row divider */}
+              {hasIncidents && (
+                <line
+                  x1={0}
+                  y1={HEADER_HEIGHT + INCIDENT_ROW_HEIGHT}
+                  x2={svgWidth}
+                  y2={HEADER_HEIGHT + INCIDENT_ROW_HEIGHT}
+                  stroke={theme.palette.divider}
+                  strokeWidth={1}
+                />
+              )}
+
               {/* Row dividers */}
               {folders.map(([folderName], i) => (
                 <line
                   key={`div-${folderName}`}
                   x1={0}
-                  y1={HEADER_HEIGHT + (i + 1) * ROW_HEIGHT}
+                  y1={HEADER_HEIGHT + incidentRowOffset + (i + 1) * ROW_HEIGHT}
                   x2={svgWidth}
-                  y2={HEADER_HEIGHT + (i + 1) * ROW_HEIGHT}
+                  y2={HEADER_HEIGHT + incidentRowOffset + (i + 1) * ROW_HEIGHT}
                   stroke={theme.palette.divider}
                   strokeWidth={1}
                 />
@@ -999,13 +1132,49 @@ export default function McapTimeline(): JSX.Element {
                 );
               })}
 
+              {/* Incident markers */}
+              {hasIncidents &&
+                incidentMarkers.map((inc, idx) => {
+                  const ix = timeToX(inc.timeSec);
+                  if (ix < -20 || ix > svgWidth + 20) {
+                    return null;
+                  }
+                  const isCurrent =
+                    urlParams.centerTime != null &&
+                    Math.abs(inc.timeSec - urlParams.centerTime) < 1;
+                  const color = SEVERITY_COLORS[inc.severity ?? "info"] ?? SEVERITY_COLORS.info!;
+                  const r = isCurrent ? 7 : 5;
+                  const cy = HEADER_HEIGHT + INCIDENT_ROW_HEIGHT / 2;
+                  return (
+                    <g key={`inc-${idx}`}>
+                      {isCurrent && (
+                        <circle
+                          cx={ix}
+                          cy={cy}
+                          r={12}
+                          fill={color}
+                          opacity={0.2}
+                        />
+                      )}
+                      <circle
+                        cx={ix}
+                        cy={cy}
+                        r={r}
+                        fill={color}
+                        stroke={isCurrent ? theme.palette.common.white : "none"}
+                        strokeWidth={isCurrent ? 2 : 0}
+                      />
+                    </g>
+                  );
+                })}
+
               {/* Selection overlay */}
               {selectionRange && (
                 <rect
                   x={timeToX(selectionRange.start)}
-                  y={HEADER_HEIGHT}
+                  y={HEADER_HEIGHT + incidentRowOffset}
                   width={timeToX(selectionRange.end) - timeToX(selectionRange.start)}
-                  height={svgHeight - HEADER_HEIGHT}
+                  height={svgHeight - HEADER_HEIGHT - incidentRowOffset}
                   fill={theme.palette.primary.main}
                   opacity={0.15}
                   stroke={theme.palette.primary.main}
@@ -1023,12 +1192,37 @@ export default function McapTimeline(): JSX.Element {
               className={classes.tooltip}
               style={{ left: tooltipState.x, top: tooltipState.y }}
             >
-              <strong>{tooltipState.file.filename}</strong>
-              <br />
-              {new Date(tooltipState.file.startTime * 1000).toLocaleString()} —{" "}
-              {new Date(tooltipState.file.endTime * 1000).toLocaleString()}
-              <br />
-              {formatFileSize(tooltipState.file.size)}
+              {tooltipState.file && (
+                <>
+                  <strong>{tooltipState.file.filename}</strong>
+                  <br />
+                  {new Date(tooltipState.file.startTime * 1000).toLocaleString()} —{" "}
+                  {new Date(tooltipState.file.endTime * 1000).toLocaleString()}
+                  <br />
+                  {formatFileSize(tooltipState.file.size)}
+                </>
+              )}
+              {tooltipState.incident && (
+                <>
+                  <strong>{tooltipState.incident.summary ?? tooltipState.incident.dedup_key ?? "Incident"}</strong>
+                  <br />
+                  {new Date(tooltipState.incident.time).toLocaleString()}
+                  {tooltipState.incident.severity && (
+                    <>
+                      {" · "}
+                      <span style={{ color: SEVERITY_COLORS[tooltipState.incident.severity] }}>
+                        {tooltipState.incident.severity}
+                      </span>
+                    </>
+                  )}
+                  {tooltipState.incident.source && (
+                    <>
+                      <br />
+                      Source: {tooltipState.incident.source}
+                    </>
+                  )}
+                </>
+              )}
             </div>
           )}
 
