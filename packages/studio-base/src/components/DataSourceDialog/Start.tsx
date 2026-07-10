@@ -2,8 +2,18 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { Button, List, ListItem, ListItemButton, SvgIcon, Typography } from "@mui/material";
-import { useMemo } from "react";
+import DownloadIcon from "@mui/icons-material/Download";
+import {
+  Button,
+  Chip,
+  CircularProgress,
+  List,
+  ListItem,
+  ListItemButton,
+  SvgIcon,
+  Typography,
+} from "@mui/material";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { makeStyles } from "tss-react/mui";
 
@@ -14,6 +24,39 @@ import { useAnalytics } from "@foxglove/studio-base/context/AnalyticsContext";
 import { usePlayerSelection } from "@foxglove/studio-base/context/PlayerSelectionContext";
 import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/useWorkspaceActions";
 import { AppEvent } from "@foxglove/studio-base/services/IAnalytics";
+
+type DownloadFile = {
+  name: string;
+  size: number;
+  platform: "mac-arm64" | "mac-x64" | "windows";
+};
+
+const PLATFORM_LABELS: Record<string, string> = {
+  "mac-arm64": "macOS (Apple Silicon)",
+  "mac-x64": "macOS (Intel)",
+  windows: "Windows",
+};
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1e9) {
+    return `${(bytes / 1e9).toFixed(1)} GB`;
+  }
+  return `${(bytes / 1e6).toFixed(1)} MB`;
+}
+
+function detectPlatform(): string | undefined {
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes("win")) {
+    return "windows";
+  }
+  if (ua.includes("mac")) {
+    // Check for Apple Silicon via platform or GPU
+    // navigator.platform is "MacIntel" even on AS in some browsers,
+    // but we can use a rough heuristic
+    return undefined; // show both mac options
+  }
+  return undefined;
+}
 
 const useStyles = makeStyles()((theme) => ({
   logo: {
@@ -52,16 +95,60 @@ const useStyles = makeStyles()((theme) => ({
   recentSourceSecondary: {
     color: "inherit",
   },
+  downloadButton: {
+    justifyContent: "space-between",
+    padding: theme.spacing(1.5, 2),
+    borderColor: theme.palette.divider,
+  },
+  downloadHighlight: {
+    borderColor: theme.palette.primary.main,
+    borderWidth: 2,
+  },
 }));
 
-const isServerMode = typeof (globalThis as Record<string, unknown>).OCTAVIEW_STUDIO_SERVER === "object";
+const serverConfig = (globalThis as Record<string, unknown>).OCTAVIEW_STUDIO_SERVER as
+  | { apiBase?: string; hasDownloads?: boolean }
+  | undefined;
+const isServerMode = typeof serverConfig === "object";
+const hasDownloads = isServerMode && serverConfig?.hasDownloads === true;
 
 export default function Start(): JSX.Element {
   const { recentSources, selectRecent } = usePlayerSelection();
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const analytics = useAnalytics();
   const { t } = useTranslation("openDialog");
   const { dialogActions } = useWorkspaceActions();
+
+  const [downloads, setDownloads] = useState<DownloadFile[]>([]);
+  const [downloadsLoading, setDownloadsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!hasDownloads) {
+      return;
+    }
+    setDownloadsLoading(true);
+    fetch("/api/downloads")
+      .then(async (res) => {
+        if (res.ok) {
+          setDownloads((await res.json()) as DownloadFile[]);
+        }
+      })
+      .catch(() => {
+        // silently ignore
+      })
+      .finally(() => {
+        setDownloadsLoading(false);
+      });
+  }, []);
+
+  const userPlatform = useMemo(() => detectPlatform(), []);
+
+  const handleDownload = useCallback((file: DownloadFile) => {
+    const a = document.createElement("a");
+    a.href = `/api/downloads/${encodeURIComponent(file.name)}`;
+    a.download = file.name;
+    a.click();
+  }, []);
 
   const startItems = useMemo(() => {
     const items: Array<{
@@ -178,6 +265,45 @@ export default function Start(): JSX.Element {
                   </ListItem>
                 ))}
               </List>
+            </Stack>
+          )}
+          {hasDownloads && (
+            <Stack gap={1}>
+              <Typography variant="h5" gutterBottom>
+                Download Desktop App
+              </Typography>
+              {downloadsLoading && <CircularProgress size={24} />}
+              {downloads.length === 0 && !downloadsLoading && (
+                <Typography variant="body2" color="text.secondary">
+                  No installers available on this server.
+                </Typography>
+              )}
+              {downloads.map((file) => {
+                const isMatch = userPlatform === file.platform;
+                return (
+                  <Button
+                    key={file.name}
+                    className={cx(classes.downloadButton, isMatch && classes.downloadHighlight)}
+                    fullWidth
+                    color="inherit"
+                    variant="outlined"
+                    startIcon={<DownloadIcon color="primary" />}
+                    onClick={() => {
+                      handleDownload(file);
+                    }}
+                  >
+                    <Stack direction="row" alignItems="center" gap={1} flex="auto">
+                      <Typography variant="subtitle2" color="text.primary">
+                        {PLATFORM_LABELS[file.platform] ?? file.platform}
+                      </Typography>
+                      {isMatch && <Chip label="Recommended" size="small" color="primary" />}
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary">
+                      {formatSize(file.size)}
+                    </Typography>
+                  </Button>
+                );
+              })}
             </Stack>
           )}
         </Stack>

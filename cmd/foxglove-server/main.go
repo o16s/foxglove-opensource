@@ -145,6 +145,7 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 
 func main() {
 	mcapPath := flag.String("mcap-path", "", "Directory containing MCAP files (enables file browser)")
+	downloadsPath := flag.String("downloads-path", "", "Directory containing desktop installer files (.dmg, .exe) to serve")
 	port := flag.Int("port", 8152, "HTTP server port")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
@@ -162,6 +163,19 @@ func main() {
 		info, err := os.Stat(absPath)
 		if err != nil || !info.IsDir() {
 			log.Fatalf("Not a valid directory: %s", absPath)
+		}
+	}
+
+	var absDownloadsPath string
+	if *downloadsPath != "" {
+		var err error
+		absDownloadsPath, err = filepath.Abs(*downloadsPath)
+		if err != nil {
+			log.Fatalf("Invalid downloads path: %v", err)
+		}
+		info, err := os.Stat(absDownloadsPath)
+		if err != nil || !info.IsDir() {
+			log.Fatalf("Not a valid directory: %s", absDownloadsPath)
 		}
 	}
 
@@ -382,6 +396,107 @@ func main() {
 
 	} // end if absPath != ""
 
+	// Downloads API: list and serve desktop installer files
+	if absDownloadsPath != "" {
+		type DownloadFileInfo struct {
+			Name     string `json:"name"`
+			Size     int64  `json:"size"`
+			Platform string `json:"platform"` // "mac-arm64", "mac-x64", "windows"
+		}
+
+		detectPlatform := func(name string) string {
+			lower := strings.ToLower(name)
+			if strings.HasSuffix(lower, ".dmg") {
+				if strings.Contains(lower, "arm64") {
+					return "mac-arm64"
+				}
+				return "mac-x64"
+			}
+			if strings.HasSuffix(lower, ".exe") {
+				return "windows"
+			}
+			return ""
+		}
+
+		mux.HandleFunc("/api/downloads", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			var files []DownloadFileInfo
+			entries, err := os.ReadDir(absDownloadsPath)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				platform := detectPlatform(entry.Name())
+				if platform == "" {
+					continue
+				}
+				info, err := entry.Info()
+				if err != nil {
+					continue
+				}
+				files = append(files, DownloadFileInfo{
+					Name:     entry.Name(),
+					Size:     info.Size(),
+					Platform: platform,
+				})
+			}
+			if files == nil {
+				files = []DownloadFileInfo{}
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			json.NewEncoder(w).Encode(files)
+		})
+
+		mux.HandleFunc("/api/downloads/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			filename := strings.TrimPrefix(r.URL.Path, "/api/downloads/")
+			if filename == "" {
+				http.Error(w, "Missing filename", http.StatusBadRequest)
+				return
+			}
+
+			// Only allow plain filenames — no path separators
+			if strings.ContainsAny(filename, "/\\") || strings.Contains(filename, "..") {
+				http.Error(w, "Invalid filename", http.StatusBadRequest)
+				return
+			}
+
+			fullPath := filepath.Join(absDownloadsPath, filename)
+			f, err := os.Open(fullPath)
+			if err != nil {
+				http.Error(w, "File not found", http.StatusNotFound)
+				return
+			}
+			defer f.Close()
+
+			stat, err := f.Stat()
+			if err != nil || stat.IsDir() {
+				http.Error(w, "File not found", http.StatusNotFound)
+				return
+			}
+
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, stat.Name()))
+			http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
+		})
+
+		log.Printf("Serving desktop downloads from: %s", absDownloadsPath)
+	}
+
 	// Serve embedded static files (the Foxglove web app)
 	staticFS, err := fs.Sub(staticFiles, "dist")
 	if err != nil {
@@ -395,12 +510,19 @@ func main() {
 		log.Fatalf("Failed to read index.html: %v", err)
 	}
 	indexHTML := string(indexBytes)
+	serverConfig := make(map[string]interface{})
 	if absPath != "" {
+		serverConfig["apiBase"] = ""
+	}
+	if absDownloadsPath != "" {
+		serverConfig["hasDownloads"] = true
+	}
+	if len(serverConfig) > 0 {
+		configJSON, _ := json.Marshal(serverConfig)
 		indexHTML = strings.Replace(
 			indexHTML,
 			"global = globalThis;",
-			`global = globalThis;
-      globalThis.OCTAVIEW_STUDIO_SERVER = { apiBase: "" };`,
+			fmt.Sprintf("global = globalThis;\n      globalThis.OCTAVIEW_STUDIO_SERVER = %s;", configJSON),
 			1,
 		)
 	}
