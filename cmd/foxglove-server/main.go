@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,146 @@ func getMcapTimeRange(path string) (startNs, endNs uint64, err error) {
 	}
 
 	return 0, 0, fmt.Errorf("no statistics or chunk indexes found")
+}
+
+type timestampedMsg struct {
+	logTime   uint64
+	channelID uint16
+	data      []byte
+}
+
+// mergeMcapFiles merges multiple MCAP files into a single output file.
+// Files are assumed to be roughly sequential. Messages are written in
+// log-time order using a simple merge across all source iterators.
+func mergeMcapFiles(outputPath string, inputPaths []string) error {
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("create output: %w", err)
+	}
+	defer outFile.Close()
+
+	writer, err := mcap.NewWriter(outFile, &mcap.WriterOptions{
+		Chunked: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create writer: %w", err)
+	}
+
+	if err := writer.WriteHeader(&mcap.Header{Profile: ""}); err != nil {
+		return fmt.Errorf("write header: %w", err)
+	}
+
+	// Track schema/channel ID remapping across files
+	schemaMap := make(map[string]uint16)  // key: sourceFile+origID -> newID
+	channelMap := make(map[string]uint16) // key: sourceFile+origID -> newID
+	var nextSchemaID uint16 = 1
+	var nextChannelID uint16 = 1
+
+	var allMessages []timestampedMsg
+
+	for fileIdx, inputPath := range inputPaths {
+		f, err := os.Open(inputPath)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", inputPath, err)
+		}
+
+		reader, err := mcap.NewReader(f)
+		if err != nil {
+			f.Close()
+			return fmt.Errorf("read %s: %w", inputPath, err)
+		}
+
+		it, err := reader.Messages()
+		if err != nil {
+			reader.Close()
+			f.Close()
+			return fmt.Errorf("messages %s: %w", inputPath, err)
+		}
+
+		err = mcap.Range(it, func(schema *mcap.Schema, channel *mcap.Channel, message *mcap.Message) error {
+			filePrefix := fmt.Sprintf("%d:", fileIdx)
+
+			// Remap schema
+			schemaKey := filePrefix + fmt.Sprintf("%d", schema.ID)
+			newSchemaID, ok := schemaMap[schemaKey]
+			if !ok {
+				newSchemaID = nextSchemaID
+				nextSchemaID++
+				schemaMap[schemaKey] = newSchemaID
+				if err := writer.WriteSchema(&mcap.Schema{
+					ID:       newSchemaID,
+					Name:     schema.Name,
+					Encoding: schema.Encoding,
+					Data:     schema.Data,
+				}); err != nil {
+					return fmt.Errorf("write schema: %w", err)
+				}
+			}
+
+			// Remap channel
+			channelKey := filePrefix + fmt.Sprintf("%d", channel.ID)
+			newChannelID, ok := channelMap[channelKey]
+			if !ok {
+				newChannelID = nextChannelID
+				nextChannelID++
+				channelMap[channelKey] = newChannelID
+				if err := writer.WriteChannel(&mcap.Channel{
+					ID:              newChannelID,
+					SchemaID:        newSchemaID,
+					Topic:           channel.Topic,
+					MessageEncoding: channel.MessageEncoding,
+					Metadata:        channel.Metadata,
+				}); err != nil {
+					return fmt.Errorf("write channel: %w", err)
+				}
+			}
+
+			// Buffer message
+			dataCopy := make([]byte, len(message.Data))
+			copy(dataCopy, message.Data)
+			allMessages = append(allMessages, timestampedMsg{
+				logTime:   message.LogTime,
+				channelID: newChannelID,
+				data:      dataCopy,
+			})
+			return nil
+		})
+
+		reader.Close()
+		f.Close()
+
+		if err != nil {
+			return fmt.Errorf("iterate %s: %w", inputPath, err)
+		}
+	}
+
+	// Sort by log time
+	sortMessages(allMessages)
+
+	// Write sorted messages
+	for i := range allMessages {
+		msg := &allMessages[i]
+		if err := writer.WriteMessage(&mcap.Message{
+			ChannelID:   msg.channelID,
+			Sequence:    uint32(i),
+			LogTime:     msg.logTime,
+			PublishTime: msg.logTime,
+			Data:        msg.data,
+		}); err != nil {
+			return fmt.Errorf("write message: %w", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close writer: %w", err)
+	}
+	return nil
+}
+
+func sortMessages(msgs []timestampedMsg) {
+	sort.Slice(msgs, func(i, j int) bool {
+		return msgs[i].logTime < msgs[j].logTime
+	})
 }
 
 func generateSelfSignedCert() (tls.Certificate, error) {
@@ -342,6 +483,121 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		json.NewEncoder(w).Encode(results)
+	})
+
+	// API: merge MCAP files into a single file
+	mux.HandleFunc("/api/mcap/merge", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			Paths []string `json:"paths"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if len(req.Paths) == 0 {
+			http.Error(w, "No files specified", http.StatusBadRequest)
+			return
+		}
+
+		// Validate all paths are within the mcap directory
+		var fullPaths []string
+		for _, relPath := range req.Paths {
+			cleanPath := filepath.Clean(relPath)
+			if strings.Contains(cleanPath, "..") {
+				http.Error(w, "Invalid path", http.StatusBadRequest)
+				return
+			}
+			fullPath := filepath.Join(absPath, cleanPath)
+			if !strings.HasPrefix(fullPath, absPath) {
+				http.Error(w, "Invalid path", http.StatusBadRequest)
+				return
+			}
+			fullPaths = append(fullPaths, fullPath)
+		}
+
+		// Create temp file for merged output
+		tmpFile, err := os.CreateTemp("", "foxglove-merge-*.mcap")
+		if err != nil {
+			http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
+			return
+		}
+		tmpPath := tmpFile.Name()
+		tmpFile.Close()
+
+		log.Printf("Merging %d files into %s", len(fullPaths), tmpPath)
+		startTime := time.Now()
+
+		if err := mergeMcapFiles(tmpPath, fullPaths); err != nil {
+			os.Remove(tmpPath)
+			log.Printf("Merge failed: %v", err)
+			http.Error(w, fmt.Sprintf("Merge failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("Merge complete in %v", time.Since(startTime))
+
+		// Clean up temp file after 1 hour
+		go func() {
+			time.Sleep(1 * time.Hour)
+			os.Remove(tmpPath)
+			log.Printf("Cleaned up temp merge file: %s", tmpPath)
+		}()
+
+		// Return the URL to serve the merged file
+		mergeID := filepath.Base(tmpPath)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		json.NewEncoder(w).Encode(map[string]string{
+			"url": "/api/mcap/merged/" + mergeID,
+		})
+	})
+
+	// API: serve merged MCAP files
+	mux.HandleFunc("/api/mcap/merged/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Range")
+			w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		mergeID := strings.TrimPrefix(r.URL.Path, "/api/mcap/merged/")
+		if mergeID == "" || strings.Contains(mergeID, "/") || strings.Contains(mergeID, "..") {
+			http.Error(w, "Invalid merge ID", http.StatusBadRequest)
+			return
+		}
+
+		tmpPath := filepath.Join(os.TempDir(), mergeID)
+		f, err := os.Open(tmpPath)
+		if err != nil {
+			http.Error(w, "Merged file not found", http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+
+		stat, err := f.Stat()
+		if err != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+		http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
 	})
 	} // end if absPath != ""
 

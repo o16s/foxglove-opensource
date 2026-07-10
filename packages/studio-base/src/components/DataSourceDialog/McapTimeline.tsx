@@ -349,15 +349,59 @@ export default function McapTimeline({
     );
   }, [files, selectionRange]);
 
+  const [merging, setMerging] = useState(false);
+
+  const totalSize = useMemo(
+    () => selectedFiles.reduce((sum, f) => sum + f.size, 0),
+    [selectedFiles],
+  );
+
   const onOpen = useCallback(() => {
     if (selectedFiles.length === 0) {
       return;
     }
-    const urls = selectedFiles.map(
-      (f) => `${apiBase}/api/mcap/files/${encodeURIComponent(f.path)}`,
-    );
-    selectSource("mcap-server", { type: "connection", params: { urls: JSON.stringify(urls) } });
-    dialogActions.dataSource.close();
+
+    // Single file — open directly without merge
+    if (selectedFiles.length === 1) {
+      const urls = [
+        `${apiBase}/api/mcap/files/${encodeURIComponent(selectedFiles[0]!.path)}`,
+      ];
+      selectSource("mcap-server", {
+        type: "connection",
+        params: { urls: JSON.stringify(urls) },
+      });
+      dialogActions.dataSource.close();
+      return;
+    }
+
+    // Multiple files — merge on server first
+    setMerging(true);
+    const paths = selectedFiles.map((f) => f.path);
+    fetch(`${apiBase}/api/mcap/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        return (await res.json()) as { url: string };
+      })
+      .then(({ url }) => {
+        const fullUrl = `${window.location.origin}${url}`;
+        selectSource("mcap-server", {
+          type: "connection",
+          params: { urls: JSON.stringify([fullUrl]) },
+        });
+        dialogActions.dataSource.close();
+      })
+      .catch((err: Error) => {
+        console.error("Merge failed:", err);
+        setMerging(false);
+        setError(`Merge failed: ${err.message}`);
+      });
   }, [apiBase, dialogActions.dataSource, selectSource, selectedFiles]);
 
   return (
@@ -596,16 +640,33 @@ export default function McapTimeline({
 
         {/* Selection info */}
         {selectedFiles.length > 0 && (
-          <Typography variant="body2" color="text.secondary" className={classes.selectionInfo}>
-            {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""} selected
-            {selectionRange && (
-              <>
-                {" "}
-                ({new Date(selectionRange.start * 1000).toLocaleString()} —{" "}
-                {new Date(selectionRange.end * 1000).toLocaleString()})
-              </>
+          <Stack direction="row" alignItems="center" gap={2} className={classes.selectionInfo}>
+            <Typography variant="body2" color="text.secondary">
+              {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""} selected
+              {" · "}
+              {formatFileSize(totalSize)}
+              {selectionRange && (
+                <>
+                  {" · "}
+                  {new Date(selectionRange.start * 1000).toLocaleString()} —{" "}
+                  {new Date(selectionRange.end * 1000).toLocaleString()}
+                </>
+              )}
+            </Typography>
+            {totalSize > 1024 * 1024 * 1024 && (
+              <Typography variant="body2" color="warning.main" fontWeight={600}>
+                ⚠ Large selection — merge may take a while
+              </Typography>
             )}
-          </Typography>
+            {merging && (
+              <Stack direction="row" alignItems="center" gap={1}>
+                <CircularProgress size={16} />
+                <Typography variant="body2" color="text.secondary">
+                  Merging files…
+                </Typography>
+              </Stack>
+            )}
+          </Stack>
         )}
       </Stack>
     </View>
