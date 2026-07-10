@@ -12,7 +12,7 @@ RUN yarn install --immutable
 RUN yarn run web:build:prod
 
 # Stage 2: Build Go server
-FROM golang:1.25 AS go-build
+FROM golang:1 AS go-build
 WORKDIR /src
 
 # Copy go module files and download deps

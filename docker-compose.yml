@@ -1,8 +1,6 @@
 services:
   octaview-studio:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
+    image: ghcr.io/o16s/octaview-studio:latest
     ports:
       - "8152:8152"
     volumes:
@@ -13,7 +11,7 @@ services:
     environment:
       # Set a fixed token (or omit to auto-generate one — check docker logs)
       - OCTAVIEW_TOKEN=${OCTAVIEW_TOKEN:-}
-    # Override CMD to customize behavior:
+    # Override command to customize:
     #   --token <value>          Fixed auth token
     #   --generate-token         Auto-generate and print token in logs
     #   --downloads-path /data/downloads   Enable desktop download buttons
