@@ -16,20 +16,7 @@ export default class FoxgloveWebSocketDataSourceFactory implements IDataSourceFa
   public iconName: IDataSourceFactory["iconName"] = "Flow";
   public description =
     "Connect to a ROS 1, ROS 2, or custom system using the Foxglove WebSocket protocol. For ROS systems, be sure to first install the foxglove_bridge ROS package.";
-  public docsLinks = [
-    {
-      label: "ROS 1",
-      url: "https://docs.octaview.ai/docs/connecting-to-data/frameworks/ros1#foxglove-websocket",
-    },
-    {
-      label: "ROS 2",
-      url: "https://docs.octaview.ai/docs/connecting-to-data/frameworks/ros2#foxglove-websocket",
-    },
-    {
-      label: "custom data",
-      url: "https://docs.octaview.ai/docs/connecting-to-data/frameworks/custom#foxglove-websocket",
-    },
-  ];
+  public docsLinks = [];
 
   public formConfig = {
     fields: [

@@ -2,7 +2,6 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { Link } from "@mui/material";
 import path from "path";
 
 import {
@@ -47,16 +46,7 @@ class RemoteDataSourceFactory implements IDataSourceFactory {
   public iconName: IDataSourceFactory["iconName"] = "FileASPX";
   public supportedFileTypes = [".bag", ".mcap"];
   public description = "Open pre-recorded .bag or .mcap files from a remote location.";
-  public docsLinks = [
-    {
-      label: "ROS 1",
-      url: "https://docs.octaview.ai/docs/connecting-to-data/frameworks/ros1#remote-file",
-    },
-    {
-      label: "MCAP",
-      url: "https://docs.octaview.ai/docs/connecting-to-data/frameworks/mcap#remote-file",
-    },
-  ];
+  public docsLinks = [];
 
   public formConfig = {
     fields: [
@@ -71,15 +61,7 @@ class RemoteDataSourceFactory implements IDataSourceFactory {
     ],
   };
 
-  public warning = (
-    <>
-      Loading large files over HTTP can be slow. For better performance, we recommend{" "}
-      <Link href="https://octaview.ai/data-platform" target="_blank">
-        Foxglove Data Platform
-      </Link>
-      .
-    </>
-  );
+  public warning = undefined;
 
   public initialize(args: DataSourceFactoryInitializeArgs): Player | undefined {
     const url = args.params?.url;
