@@ -1,0 +1,27 @@
+services:
+  octaview-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "8152:8152"
+    volumes:
+      # Mount your MCAP recordings directory
+      - ./recordings:/data/mcap
+      # Optional: mount desktop installers for download buttons
+      # - ./downloads:/data/downloads
+    environment:
+      # Set a fixed token (or omit to auto-generate one — check docker logs)
+      - OCTAVIEW_TOKEN=${OCTAVIEW_TOKEN:-}
+    # Override CMD to customize behavior:
+    #   --token <value>          Fixed auth token
+    #   --generate-token         Auto-generate and print token in logs
+    #   --downloads-path /data/downloads   Enable desktop download buttons
+    #   --tls                    Enable self-signed HTTPS
+    command:
+      - --mcap-path
+      - /data/mcap
+      - --port
+      - "8152"
+      - --generate-token
+    restart: unless-stopped

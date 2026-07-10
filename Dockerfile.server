@@ -1,0 +1,42 @@
+# Stage 1: Build web frontend
+FROM node:20-slim AS web-build
+WORKDIR /src
+RUN corepack enable
+
+COPY package.json yarn.lock .yarnrc.yml ./
+COPY .yarn .yarn
+COPY packages packages
+COPY patches patches
+RUN yarn install --immutable
+
+RUN yarn run web:build:prod
+
+# Stage 2: Build Go server
+FROM golang:1.25 AS go-build
+WORKDIR /src
+
+# Copy go module files and download deps
+COPY cmd/foxglove-server/go.mod cmd/foxglove-server/go.sum ./
+RUN go mod download
+
+# Copy source
+COPY cmd/foxglove-server/*.go ./
+
+# Copy built web assets into dist/ for embedding
+COPY --from=web-build /src/web/.webpack dist/
+
+# Build static binary
+RUN CGO_ENABLED=0 go build -o /octaview-studio .
+
+# Stage 3: Minimal runtime
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=go-build /octaview-studio /octaview-studio
+
+EXPOSE 8152
+
+VOLUME ["/data/mcap"]
+VOLUME ["/data/downloads"]
+
+ENTRYPOINT ["/octaview-studio"]
+CMD ["--mcap-path", "/data/mcap", "--port", "8152", "--generate-token"]

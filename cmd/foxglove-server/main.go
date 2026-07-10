@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -150,7 +151,22 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
 	useTLS := flag.Bool("tls", false, "Enable HTTPS with auto-generated self-signed certificate")
+	authToken := flag.String("token", "", "Authentication token (like Jupyter). If set, requires ?token=<value> on first visit. Stored in a browser cookie.")
+	generateToken := flag.Bool("generate-token", false, "Auto-generate a random authentication token and print the URL")
 	flag.Parse()
+
+	// Resolve auth token
+	token := *authToken
+	if token == "" {
+		token = os.Getenv("OCTAVIEW_TOKEN")
+	}
+	if *generateToken && token == "" {
+		tokenBytes := make([]byte, 24)
+		if _, err := rand.Read(tokenBytes); err != nil {
+			log.Fatalf("Failed to generate token: %v", err)
+		}
+		token = hex.EncodeToString(tokenBytes)
+	}
 
 	var absPath string
 	if *mcapPath != "" {
@@ -548,24 +564,85 @@ func main() {
 		fileServer.ServeHTTP(w, r)
 	})
 
+	// Wrap with token authentication if configured
+	var handler http.Handler = mux
+	if token != "" {
+		const cookieName = "octaview_token"
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check cookie first
+			if cookie, err := r.Cookie(cookieName); err == nil && cookie.Value == token {
+				mux.ServeHTTP(w, r)
+				return
+			}
+
+			// Check ?token= query param — if valid, set cookie and redirect to clean URL
+			if qToken := r.URL.Query().Get("token"); qToken == token {
+				http.SetCookie(w, &http.Cookie{
+					Name:     cookieName,
+					Value:    token,
+					Path:     "/",
+					MaxAge:   365 * 24 * 3600, // 1 year
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+				})
+				// Redirect to URL without token param
+				cleanURL := *r.URL
+				q := cleanURL.Query()
+				q.Del("token")
+				cleanURL.RawQuery = q.Encode()
+				http.Redirect(w, r, cleanURL.String(), http.StatusFound)
+				return
+			}
+
+			// Unauthorized — return a simple login page
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `<!DOCTYPE html>
+<html><head><title>Octaview Studio</title>
+<style>
+  body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #0E0E16; color: #F7F7F5; }
+  .box { text-align: center; max-width: 400px; }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  p { color: #B9B9C2; margin-bottom: 24px; }
+  input { width: 100%; padding: 12px; border: 1px solid #2B2B3A; border-radius: 8px; background: #191926; color: #F7F7F5; font-size: 16px; box-sizing: border-box; outline: none; }
+  input:focus { border-color: #FF5C00; }
+  button { width: 100%; padding: 12px; margin-top: 12px; border: none; border-radius: 8px; background: #FF5C00; color: white; font-size: 16px; font-weight: 700; cursor: pointer; }
+  button:hover { background: #E05000; }
+</style></head>
+<body><div class="box">
+  <h1>Octaview Studio</h1>
+  <p>Enter access token to continue</p>
+  <form method="get"><input name="token" type="password" placeholder="Token" autofocus /><button type="submit">Sign in</button></form>
+</div></body></html>`)
+		})
+	}
+
 	addr := fmt.Sprintf(":%d", *port)
 	if absPath != "" {
 		log.Printf("Serving MCAP files from: %s", absPath)
 	}
 
+	scheme := "http"
+	if *tlsCert != "" || *useTLS {
+		scheme = "https"
+	}
+	if token != "" {
+		log.Printf("Authentication enabled. Access URL: %s://localhost:%d/?token=%s", scheme, *port, token)
+	}
+
 	if *tlsCert != "" && *tlsKey != "" {
 		log.Printf("Octaview Studio server starting on https://localhost:%d", *port)
-		log.Fatal(http.ListenAndServeTLS(addr, *tlsCert, *tlsKey, mux))
+		log.Fatal(http.ListenAndServeTLS(addr, *tlsCert, *tlsKey, handler))
 	} else if *useTLS {
 		cert, err := generateSelfSignedCert()
 		if err != nil {
 			log.Fatalf("Failed to generate self-signed certificate: %v", err)
 		}
-		log.Printf("Generated self-signed TLS certificate (valid 1 year, localhost/127.0.0.1)")
+		log.Printf("Generated self-signed TLS certificate (valid 5 years, localhost/127.0.0.1)")
 		log.Printf("Octaview Studio server starting on https://localhost:%d", *port)
 		server := &http.Server{
 			Addr:    addr,
-			Handler: mux,
+			Handler: handler,
 			TLSConfig: &tls.Config{
 				Certificates: []tls.Certificate{cert},
 			},
@@ -573,6 +650,6 @@ func main() {
 		log.Fatal(server.ListenAndServeTLS("", ""))
 	} else {
 		log.Printf("Octaview Studio server starting on http://localhost:%d", *port)
-		log.Fatal(http.ListenAndServe(addr, mux))
+		log.Fatal(http.ListenAndServe(addr, handler))
 	}
 }

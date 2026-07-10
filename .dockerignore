@@ -5,3 +5,9 @@
 dist/
 node_modules/
 Dockerfile
+Dockerfile.server
+.git
+desktop/dist
+desktop/node_modules
+recordings
+downloads
