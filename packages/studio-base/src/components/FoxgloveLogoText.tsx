@@ -7,7 +7,7 @@ import { SvgIcon, SvgIconProps } from "@mui/material";
 export default function FoxgloveLogoText(props: SvgIconProps): JSX.Element {
   return (
     <SvgIcon viewBox="0 0 240 56" {...props}>
-      <title>Octaview</title>
+      <title>octaview</title>
       <g transform="translate(0,4)">
         {/* Icon */}
         <rect width="48" height="48" rx="10.5" fill="#0E0E16" />
@@ -36,16 +36,17 @@ export default function FoxgloveLogoText(props: SvgIconProps): JSX.Element {
           strokeLinejoin="round"
         />
       </g>
-      {/* Wordmark */}
+      {/* Wordmark — always lowercase per design system */}
       <text
         x="56"
         y="38"
-        fontFamily="system-ui, -apple-system, sans-serif"
+        fontFamily="'Poppins', system-ui, -apple-system, sans-serif"
         fontSize="28"
         fontWeight="700"
+        letterSpacing="-0.28"
         fill="currentColor"
       >
-        Octaview
+        octaview
       </text>
     </SvgIcon>
   );

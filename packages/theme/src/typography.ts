@@ -23,8 +23,9 @@ declare module "@mui/material/styles/createTypography" {
 // ends up crashing in DWriteFontFamily::GetFirstMatchingFont() or DWriteFont::Create().
 //
 // https://bugs.chromium.org/p/chromium/issues/detail?id=1261577
-export const fontSansSerif = "'Inter'";
-export const fontMonospace = "'IBM Plex Mono'";
+export const fontSansSerif = "'B612'";
+export const fontMonospace = "'B612 Mono'";
+const fontHeading = "'Poppins'";
 
 export const fontFeatureSettings = [
   "'tnum'", // enable tabular-numerals
@@ -32,9 +33,10 @@ export const fontFeatureSettings = [
 ].join(",");
 
 const headingFontStyles: TypographyStyle = {
+  fontFamily: fontHeading,
   fontFeatureSettings,
-  letterSpacing: "-0.025em",
-  fontWeight: 800,
+  letterSpacing: "-0.01em",
+  fontWeight: 700,
 };
 
 const subtitleFontStyles: TypographyStyle = {
@@ -51,6 +53,7 @@ export const typography: TypographyOptions = {
   body1: { fontFeatureSettings },
   body2: { fontFeatureSettings },
   button: {
+    fontFamily: fontHeading,
     fontFeatureSettings,
     textTransform: "none",
     fontWeight: 700,

@@ -233,16 +233,16 @@ const useStyles = makeStyles()((theme) => ({
   },
 }));
 
-// Color palette for folder rows
+// Data visualization palette (octaview design system, colorblind-aware)
 const COLORS = [
-  "#2196F3",
-  "#4CAF50",
-  "#FF9800",
-  "#9C27B0",
-  "#F44336",
-  "#00BCD4",
-  "#795548",
-  "#607D8B",
+  "#3E63DD",
+  "#30A46C",
+  "#FF5C00",
+  "#8E4EC6",
+  "#00A2C7",
+  "#E5484D",
+  "#F5B82E",
+  "#6E6E7C",
 ];
 
 type VisibleBar = {

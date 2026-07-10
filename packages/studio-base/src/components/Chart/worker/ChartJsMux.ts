@@ -31,7 +31,7 @@ import {
 } from "chart.js";
 import AnnotationPlugin from "chartjs-plugin-annotation";
 
-import PlexMono from "@foxglove/studio-base/styles/assets/PlexMono.woff2";
+import B612Mono from "@foxglove/studio-base/styles/assets/B612Mono-Regular.woff2";
 import Rpc from "@foxglove/studio-base/util/Rpc";
 import { setupWorker } from "@foxglove/studio-base/util/RpcWorkerUtils";
 
@@ -62,7 +62,7 @@ async function loadDefaultFont(): Promise<FontFace> {
   // Passing a `url(data:...) format('woff2')` string does not work in Safari, which complains it
   // cannot load the data url due to it being cross-origin.
   // https://bugs.webkit.org/show_bug.cgi?id=265000
-  const fontFace = new FontFace("IBM Plex Mono", await (await fetch(PlexMono)).arrayBuffer());
+  const fontFace = new FontFace("B612 Mono", await (await fetch(B612Mono)).arrayBuffer());
   if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope) {
     (self as unknown as WorkerGlobalScope).fonts.add(fontFace);
   } else {
