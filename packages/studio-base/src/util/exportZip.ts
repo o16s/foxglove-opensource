@@ -110,6 +110,9 @@ export async function exportFilesAsZip(files: File[], filename = "recordings.zip
   a.download = filename;
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // Delay revoking the blob URL so the browser has time to start the download.
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 10_000);
 }

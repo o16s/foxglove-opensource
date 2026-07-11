@@ -241,6 +241,11 @@ export class ImageRenderable extends Renderable<ImageUserData> {
   ): Promise<ImageBitmap | ImageData> {
     if ("format" in image) {
       if ("timestamp" in image && isVideoFormat(image.format)) {
+        if (typeof VideoDecoder === "undefined") {
+          throw new Error(
+            "VideoDecoder is not available. H.264 decoding requires a secure context (HTTPS).",
+          );
+        }
         const tsNanos =
           BigInt(image.timestamp.sec) * 1_000_000_000n + BigInt(image.timestamp.nsec);
         return await (this.#videoDecoder ??= new H264Decoder()).decode(image.data, tsNanos);

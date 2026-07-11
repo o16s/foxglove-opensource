@@ -61,6 +61,7 @@ import useElectronFilesToOpen from "@foxglove/studio-base/hooks/useElectronFiles
 import { PlayerPresence } from "@foxglove/studio-base/players/types";
 import { PanelStateContextProvider } from "@foxglove/studio-base/providers/PanelStateContextProvider";
 import WorkspaceContextProvider from "@foxglove/studio-base/providers/WorkspaceContextProvider";
+import { storeDownloadedFiles } from "@foxglove/studio-base/dataSources/McapServerDataSourceFactory";
 import { parseAppURLState } from "@foxglove/studio-base/util/appURLState";
 
 import { useWorkspaceActions } from "./context/Workspace/useWorkspaceActions";
@@ -409,6 +410,109 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
     setUnappliedTime({ time: undefined });
   }, [playerPresence, seek, unappliedTime]);
 
+  // Open a specific file directly via ?file= URL param.
+  // Matches the path against the server MCAP index, downloads, and opens it.
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const filePath = params.get("file");
+    if (!filePath) {
+      return;
+    }
+
+    const serverConfig = (globalThis as Record<string, unknown>).OCTAVIEW_STUDIO_SERVER as
+      | { apiBase?: string }
+      | undefined;
+    if (typeof serverConfig !== "object") {
+      return;
+    }
+    const apiBase = serverConfig?.apiBase ?? "";
+
+    const abortController = new AbortController();
+
+    (async () => {
+      try {
+        // Fetch index to find the file
+        const res = await fetch(`${apiBase}/api/mcap/index`, { signal: abortController.signal });
+        if (!res.ok) {
+          throw new Error(`Index fetch failed: HTTP ${res.status}`);
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) {
+          throw new Error("No response body from index");
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let matchedPath: string | undefined;
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) {
+              continue;
+            }
+            const parsed = JSON.parse(line) as Record<string, unknown>;
+            const fileEntry = parsed.file as { path?: string } | undefined;
+            if (fileEntry?.path === filePath) {
+              matchedPath = fileEntry.path;
+              break;
+            }
+          }
+          if (matchedPath != undefined) {
+            await reader.cancel();
+            break;
+          }
+        }
+
+        if (matchedPath == undefined) {
+          log.error(`File not found in index: ${filePath}`);
+          enqueueSnackbar(`Recording not found: ${filePath}`, { variant: "error" });
+          return;
+        }
+
+        // Download the file
+        const fileUrl = `${apiBase}/api/mcap/files/${encodeURIComponent(matchedPath)}`;
+        const fileRes = await fetch(fileUrl, { signal: abortController.signal });
+        if (!fileRes.ok) {
+          throw new Error(`File download failed: HTTP ${fileRes.status}`);
+        }
+        const blob = await fileRes.blob();
+        const fileName = matchedPath.includes("/")
+          ? matchedPath.slice(matchedPath.lastIndexOf("/") + 1)
+          : matchedPath;
+        const file = new File([blob], fileName);
+
+        const downloadId = `file-${Date.now()}`;
+        storeDownloadedFiles(downloadId, [file]);
+        selectSource("mcap-server", {
+          type: "connection",
+          params: { downloadId },
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          return;
+        }
+        log.error(`Failed to open file from URL: ${err}`);
+        enqueueSnackbar(`Failed to open recording: ${filePath}`, { variant: "error" });
+      }
+    })();
+
+    return () => {
+      abortController.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const appBar = useMemo(
     () => (
       <AppBarComponent
@@ -497,10 +601,18 @@ export default function Workspace(props: WorkspaceProps): JSX.Element {
     if (isPlayerPresent || !showOpenDialogOnStartup) {
       return undefined;
     }
-    // Auto-open recordings view when URL has ?view=recordings
+    // Auto-open recordings view when URL has relevant params
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      if (params.get("view") === "recordings") {
+      // ?file= opens directly — don't show any dialog
+      if (params.has("file")) {
+        return undefined;
+      }
+      if (
+        params.get("view") === "recordings" ||
+        params.has("t") ||
+        params.has("incidents")
+      ) {
         return "server";
       }
     }

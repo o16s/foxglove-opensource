@@ -14,6 +14,67 @@ Complete reference for all URL query parameters accepted by Octaview Studio.
 |-----------|---------|-------------|
 | `openIn` | `?openIn=web` | Controls whether to open in the web app or launch the desktop app. Values: `web`, `desktop`, `ask`. Defaults to `web` if not set. |
 
+## Recordings View (MCAP Timeline)
+
+These parameters open the Recordings modal and control what it displays. Any of these params being present will auto-open the Recordings view on page load.
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `view` | `?view=recordings` | Opens the Recordings modal directly. Only value: `recordings`. |
+| `t` | `?t=1720619400` | Unix timestamp in seconds. Centers the timeline on this time and auto-selects nearby recordings. Implies `view=recordings`. |
+| `incidents` | `?incidents=<base64>` | JSON array of incidents to overlay on the timeline. Accepts base64 or plain JSON. Implies `view=recordings`. |
+| `file` | `?file=/mnt/datalog/test.mcap` | On-disk path of an MCAP file. Looks it up in the server index and opens it directly in the player, skipping the timeline view. |
+
+When no URL params are present and the user opens Recordings manually, the timeline defaults to "Now" (current time, day view).
+
+### Combining Parameters
+
+```
+/?t=1720619400&incidents=<base64>
+```
+
+Opens the Recordings view centered on the given timestamp with incidents overlaid. The user can then select files and click Open.
+
+```
+/?file=/mnt/datalog/sensingcam/live-stream/sick1_2026-07-10.mcap
+```
+
+Looks up the file path in the MCAP index, downloads it, and opens it directly in the player.
+
+### Incident Object Schema
+
+```json
+[
+  {
+    "time": "2026-07-10T14:30:00Z",
+    "summary": "Motor overtemp",
+    "severity": "warning",
+    "dedup_key": "alert-123",
+    "source": "PLC"
+  }
+]
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `time` | string | Yes | ISO 8601 timestamp |
+| `summary` | string | No | Display label on the timeline |
+| `severity` | string | No | `critical`, `error`, `warning`, or `info` — controls color |
+| `dedup_key` | string | No | Deduplication identifier |
+| `source` | string | No | Source system shown in tooltip |
+
+### Incidents Example
+
+Plain JSON (URL-encoded):
+```
+/?t=1720619400&incidents=[{"time":"2026-07-10T14:30:00Z","summary":"Motor overtemp","severity":"warning"}]
+```
+
+Base64-encoded (recommended for complex payloads):
+```
+/?t=1720619400&incidents=W3sidGltZSI6IjIwMjYtMDctMTBUMTQ6MzA6MDBaIiwic3VtbWFyeSI6Ik1vdG9yIG92ZXJ0ZW1wIiwic2V2ZXJpdHkiOiJ3YXJuaW5nIn1d
+```
+
 ## Data Source Selection
 
 Use `ds` to auto-connect to a data source on page load. Source-specific parameters are prefixed with `ds.`.
@@ -100,49 +161,6 @@ These data sources load local files and cannot be triggered via URL:
 | Parameter | Description |
 |-----------|-------------|
 | `ds.eventId` | Selects a specific event in the events panel. Set automatically when clicking events in the UI. |
-
-## MCAP Timeline Parameters
-
-These parameters control the MCAP timeline browser (the "Recordings" view). They are read directly from the URL on page load.
-
-| Parameter | Example | Description |
-|-----------|---------|-------------|
-| `t` | `?t=1720619400` | Unix timestamp in seconds. Centers the timeline view on this time and auto-selects nearby recordings. |
-| `incidents` | `?incidents=<base64>` | JSON array of incidents to overlay on the timeline. Accepts base64-encoded JSON or plain URL-encoded JSON. |
-
-### Incident Object Schema
-
-```json
-[
-  {
-    "time": "2026-07-10T14:30:00Z",
-    "summary": "Motor overtemp",
-    "severity": "warning",
-    "dedup_key": "alert-123",
-    "source": "PLC"
-  }
-]
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `time` | string | Yes | ISO 8601 timestamp |
-| `summary` | string | No | Display label on the timeline |
-| `severity` | string | No | `critical`, `error`, `warning`, or `info` — controls color |
-| `dedup_key` | string | No | Deduplication identifier |
-| `source` | string | No | Source system shown in tooltip |
-
-### Incidents Example
-
-Plain JSON (URL-encoded):
-```
-/?t=1720619400&incidents=[{"time":"2026-07-10T14:30:00Z","summary":"Motor overtemp","severity":"warning"}]
-```
-
-Base64-encoded (recommended for complex payloads):
-```
-/?t=1720619400&incidents=W3sidGltZSI6IjIwMjYtMDctMTBUMTQ6MzA6MDBaIiwic3VtbWFyeSI6Ik1vdG9yIG92ZXJ0ZW1wIiwic2V2ZXJpdHkiOiJ3YXJuaW5nIn1d
-```
 
 ## Server API Endpoints
 
