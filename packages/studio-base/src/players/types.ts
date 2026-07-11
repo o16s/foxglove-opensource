@@ -198,6 +198,10 @@ export type PlayerStateActiveData = {
   // A map of parameter names to parameter values, used to describe remote parameters such as
   // rosparams.
   parameters?: Map<string, ParameterValue>;
+
+  // Per-source time ranges when multiple files are loaded (e.g. multiple MCAP files).
+  // Each entry has a name, start, and end time. Only present when >1 source is loaded.
+  sourceRanges?: { name: string; folder?: string; start: Time; end: Time }[];
 };
 
 // Represents a ROS topic, though the actual data does not need to come from a ROS system.

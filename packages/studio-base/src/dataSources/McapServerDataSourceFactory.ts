@@ -12,12 +12,20 @@ import { Player } from "@foxglove/studio-base/players/types";
 // Module-level store for pre-downloaded files passed from McapTimeline
 const pendingDownloads = new Map<string, File[]>();
 
+// Keep a reference to the most recently opened files for export
+let currentOpenFiles: File[] | undefined;
+
 /**
  * Store downloaded files so the factory can pick them up by ID.
  * Called by McapTimeline after sequential download completes.
  */
 export function storeDownloadedFiles(id: string, files: File[]): void {
   pendingDownloads.set(id, files);
+}
+
+/** Get the currently open files (for ZIP export). */
+export function getCurrentFiles(): File[] | undefined {
+  return currentOpenFiles;
 }
 
 class McapServerDataSourceFactory implements IDataSourceFactory {
@@ -45,6 +53,7 @@ class McapServerDataSourceFactory implements IDataSourceFactory {
       const files = pendingDownloads.get(downloadId);
       pendingDownloads.delete(downloadId);
       if (files && files.length > 0) {
+        currentOpenFiles = files;
         const name = files.length === 1
           ? (files[0]!.name)
           : `${files.length} files`;

@@ -4,7 +4,7 @@
 
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import { Button } from "@mui/material";
-import { PropsWithChildren } from "react";
+import { PropsWithChildren, ReactNode } from "react";
 import { makeStyles } from "tss-react/mui";
 
 import Stack from "@foxglove/studio-base/components/Stack";
@@ -12,6 +12,7 @@ import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/use
 
 type ViewProps = {
   onOpen?: () => void;
+  footer?: ReactNode;
 };
 
 const useStyles = makeStyles()((theme) => ({
@@ -27,47 +28,49 @@ const useStyles = makeStyles()((theme) => ({
 }));
 
 export default function View(props: PropsWithChildren<ViewProps>): JSX.Element {
-  const { onOpen } = props;
+  const { onOpen, footer } = props;
   const { classes } = useStyles();
   const { dialogActions } = useWorkspaceActions();
 
   return (
     <>
       <div className={classes.content}>{props.children}</div>
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        paddingX={4}
-        paddingBottom={4}
-        paddingTop={2}
-      >
-        <Button
-          startIcon={<ChevronLeftIcon fontSize="large" />}
-          onClick={() => {
-            dialogActions.dataSource.open("start");
-          }}
+      {footer != undefined ? (
+        footer
+      ) : (
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+          paddingX={4}
+          paddingBottom={4}
+          paddingTop={2}
         >
-          Back
-        </Button>
-
-        <Stack direction="row" gap={2}>
           <Button
-            color="inherit"
-            variant="outlined"
+            startIcon={<ChevronLeftIcon fontSize="large" />}
             onClick={() => {
-              dialogActions.dataSource.close();
+              dialogActions.dataSource.open("start");
             }}
           >
-            Cancel
+            Back
           </Button>
-          <Button variant="contained" onClick={onOpen} disabled={onOpen == undefined}>
-            Open
-          </Button>
+
+          <Stack direction="row" gap={2}>
+            <Button
+              color="inherit"
+              variant="outlined"
+              onClick={() => {
+                dialogActions.dataSource.close();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="contained" onClick={onOpen} disabled={onOpen == undefined}>
+              Open
+            </Button>
+          </Stack>
         </Stack>
-      </Stack>
+      )}
     </>
   );
-
-  return <>{props.children}</>;
 }

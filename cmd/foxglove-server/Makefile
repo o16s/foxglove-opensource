@@ -54,6 +54,6 @@ deploy-downloads: desktop-installers
 run-ssh: install-ssh
 	exec ssh -t $(SSH) '$(REMOTE_BIN) \
 		--mcap-path $(REMOTE_MCAP_PATH) \
-		--downloads-path $(REMOTE_DOWNLOADS_PATH) \
+		$$([ -d $(REMOTE_DOWNLOADS_PATH) ] && echo "--downloads-path $(REMOTE_DOWNLOADS_PATH)") \
 		--port $(REMOTE_PORT) \
 		--tls'

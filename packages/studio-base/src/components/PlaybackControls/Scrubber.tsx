@@ -34,6 +34,23 @@ import { ProgressPlot } from "./ProgressPlot";
 import Slider, { HoverOverEvent } from "./Slider";
 
 const useStyles = makeStyles()((theme) => ({
+  outerContainer: {
+    position: "relative",
+    display: "flex",
+    flexDirection: "column",
+    flexGrow: 1,
+  },
+  cursor: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: 2,
+    backgroundColor: theme.palette.text.primary,
+    borderRadius: 1,
+    transform: "translate(-50%, 0)",
+    pointerEvents: "none",
+    zIndex: 2,
+  },
   marker: {
     backgroundColor: theme.palette.text.primary,
     position: "absolute",
@@ -52,6 +69,24 @@ const useStyles = makeStyles()((theme) => ({
   trackDisabled: {
     opacity: theme.palette.action.disabledOpacity,
   },
+  sourceRangesLane: {
+    position: "relative",
+    width: "100%",
+    height: 5,
+    backgroundColor: theme.palette.action.hover,
+  },
+  sourceRangeBar: {
+    position: "absolute",
+    height: 4,
+    top: 0,
+    borderRadius: 0,
+    backgroundColor: theme.palette.text.primary,
+    opacity: 0.12,
+    cursor: "default",
+    "&:hover": {
+      opacity: 0.25,
+    },
+  },
 }));
 
 const selectStartTime = (ctx: MessagePipelineContext) => ctx.playerState.activeData?.startTime;
@@ -60,6 +95,8 @@ const selectEndTime = (ctx: MessagePipelineContext) => ctx.playerState.activeDat
 const selectRanges = (ctx: MessagePipelineContext) =>
   ctx.playerState.progress.fullyLoadedFractionRanges;
 const selectPresence = (ctx: MessagePipelineContext) => ctx.playerState.presence;
+const selectSourceRanges = (ctx: MessagePipelineContext) =>
+  ctx.playerState.activeData?.sourceRanges;
 
 type Props = {
   onSeek: (seekTo: Time) => void;
@@ -76,6 +113,7 @@ export default function Scrubber(props: Props): JSX.Element {
   const endTime = useMessagePipeline(selectEndTime);
   const presence = useMessagePipeline(selectPresence);
   const ranges = useMessagePipeline(selectRanges);
+  const sourceRanges = useMessagePipeline(selectSourceRanges);
 
   const setHoverValue = useSetHoverValue();
 
@@ -193,41 +231,116 @@ export default function Scrubber(props: Props): JSX.Element {
     }
   }, [hoverInfo]);
 
-  return (
-    <Tooltip
-      title={
-        hoverInfo != undefined ? <PlaybackControlsTooltipContent stamp={hoverInfo.stamp} /> : ""
+  const totalDuration = startTime && endTime ? toSec(subtractTimes(endTime, startTime)) : 0;
+
+  // Assign lanes for overlapping source ranges (greedy interval scheduling)
+  const hasSourceRanges = sourceRanges != undefined && sourceRanges.length > 1 && startTime != undefined && totalDuration > 0;
+
+  const sourceLanes = useMemo(() => {
+    if (!sourceRanges || sourceRanges.length <= 1) {
+      return { laneCount: 0, laneMap: new Map<number, number>() };
+    }
+    const laneEnds: number[] = [];
+    const laneMap = new Map<number, number>();
+    for (let i = 0; i < sourceRanges.length; i++) {
+      const sr = sourceRanges[i]!;
+      const srStart = toSec(sr.start);
+      const srEnd = toSec(sr.end);
+      let assigned = -1;
+      for (let l = 0; l < laneEnds.length; l++) {
+        if (laneEnds[l]! <= srStart) {
+          assigned = l;
+          laneEnds[l] = srEnd;
+          break;
+        }
       }
-      placement="top"
-      disableInteractive
-      TransitionComponent={Fade}
-      TransitionProps={{ timeout: 0 }}
-      PopperProps={popperProps}
-    >
-      <Stack
-        direction="row"
-        flexGrow={1}
-        alignItems="center"
-        position="relative"
-        style={{ height: 32 }}
-      >
-        <div className={cx(classes.track, { [classes.trackDisabled]: !startTime })} />
-        <Stack position="absolute" flex="auto" fullWidth style={{ height: 6 }}>
-          <ProgressPlot loading={loading} availableRanges={ranges} />
-        </Stack>
-        <Stack fullHeight fullWidth position="absolute" flex={1}>
-          <Slider
-            disabled={min == undefined || max == undefined}
-            fraction={fraction}
-            onHoverOver={onHoverOver}
-            onHoverOut={onHoverOut}
-            onChange={onChange}
-            renderSlider={renderSlider}
-          />
-        </Stack>
-        <EventsOverlay />
-        <PlaybackBarHoverTicks componentId={hoverComponentId} />
+      if (assigned === -1) {
+        assigned = laneEnds.length;
+        laneEnds.push(srEnd);
+      }
+      laneMap.set(i, assigned);
+    }
+    return { laneCount: laneEnds.length, laneMap };
+  }, [sourceRanges]);
+
+  // When source ranges are visible, suppress the in-Slider marker —
+  // the outer cursor handles it instead.
+  const renderSliderForMultiSource = useCallback(() => undefined, []);
+
+  return (
+    <div className={classes.outerContainer}>
+      {/* Full-height cursor spanning source lanes + scrubber */}
+      {hasSourceRanges && fraction != undefined && (
+        <div className={classes.cursor} style={{ left: `${fraction * 100}%` }} />
+      )}
+
+      {/* Source range lanes (above main scrubber) */}
+      {hasSourceRanges && sourceRanges != undefined && startTime != undefined && (
+        <>
+          {Array.from({ length: sourceLanes.laneCount }, (_, lane) => (
+            <div key={lane} className={classes.sourceRangesLane}>
+              {sourceRanges.map((sr, i) => {
+                if (sourceLanes.laneMap.get(i) !== lane) {
+                  return undefined;
+                }
+                const leftFrac = toSec(subtractTimes(sr.start, startTime)) / totalDuration;
+                const widthFrac = toSec(subtractTimes(sr.end, sr.start)) / totalDuration;
+                const label = sr.folder ? `${sr.folder}/${sr.name}` : sr.name;
+                return (
+                  <Tooltip key={i} title={label} placement="top" disableInteractive>
+                    <div
+                      className={classes.sourceRangeBar}
+                      style={{
+                        left: `${leftFrac * 100}%`,
+                        width: `${Math.max(widthFrac * 100, 0.5)}%`,
+                      }}
+                    />
+                  </Tooltip>
+                );
+              })}
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* Main scrubber */}
+      <Stack direction="row" alignItems="center" position="relative" flexGrow={1}>
+        <Tooltip
+          title={
+            hoverInfo != undefined ? <PlaybackControlsTooltipContent stamp={hoverInfo.stamp} /> : ""
+          }
+          placement="top"
+          disableInteractive
+          TransitionComponent={Fade}
+          TransitionProps={{ timeout: 0 }}
+          PopperProps={popperProps}
+        >
+          <Stack
+            direction="row"
+            flexGrow={1}
+            alignItems="center"
+            position="relative"
+            style={{ height: 32 }}
+          >
+            <div className={cx(classes.track, { [classes.trackDisabled]: !startTime })} />
+            <Stack position="absolute" flex="auto" fullWidth style={{ height: 6 }}>
+              <ProgressPlot loading={loading} availableRanges={ranges} />
+            </Stack>
+            <Stack fullHeight fullWidth position="absolute" flex={1}>
+              <Slider
+                disabled={min == undefined || max == undefined}
+                fraction={fraction}
+                onHoverOver={onHoverOver}
+                onHoverOut={onHoverOut}
+                onChange={onChange}
+                renderSlider={hasSourceRanges ? renderSliderForMultiSource : renderSlider}
+              />
+            </Stack>
+            <EventsOverlay />
+            <PlaybackBarHoverTicks componentId={hoverComponentId} />
+          </Stack>
+        </Tooltip>
       </Stack>
-    </Tooltip>
+    </div>
   );
 }

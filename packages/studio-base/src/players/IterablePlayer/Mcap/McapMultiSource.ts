@@ -13,6 +13,7 @@ import {
   Initalization,
   IteratorResult,
   MessageIteratorArgs,
+  SourceRange,
 } from "../IIterableSource";
 
 /**
@@ -22,6 +23,8 @@ import {
  */
 export class McapMultiSource implements IIterableSource {
   #sources: McapIterableSource[];
+  #sourceNames: string[];
+  #sourceFolders: (string | undefined)[];
 
   public constructor(sources: Blob[] | string[]) {
     this.#sources = sources.map((source) =>
@@ -29,6 +32,27 @@ export class McapMultiSource implements IIterableSource {
         ? new McapIterableSource({ type: "url", url: source })
         : new McapIterableSource({ type: "file", file: source }),
     );
+    // Extract name and folder from source paths.
+    // URL sources are typically /api/mcap/files/<encoded-path> where the last
+    // segment is the full encoded file path (e.g. "subfolder%2Ffile.mcap").
+    const parsed = sources.map((source) => {
+      if (typeof source === "string") {
+        const decoded = decodeURIComponent(source.split("/").pop() ?? source);
+        const slashIdx = decoded.lastIndexOf("/");
+        if (slashIdx > 0) {
+          return { name: decoded.slice(slashIdx + 1), folder: decoded.slice(0, slashIdx) };
+        }
+        return { name: decoded, folder: undefined };
+      }
+      const fileName = (source as File).name ?? "unknown";
+      const fileSlashIdx = fileName.lastIndexOf("/");
+      if (fileSlashIdx > 0) {
+        return { name: fileName.slice(fileSlashIdx + 1), folder: fileName.slice(0, fileSlashIdx) };
+      }
+      return { name: fileName, folder: undefined };
+    });
+    this.#sourceNames = parsed.map((p) => p.name);
+    this.#sourceFolders = parsed.map((p) => p.folder);
   }
 
   public async initialize(): Promise<Initalization> {
@@ -44,7 +68,18 @@ export class McapMultiSource implements IIterableSource {
     const problems: Initalization["problems"] = [];
     let profile: string | undefined;
 
-    for (const result of results) {
+    const sourceRanges: SourceRange[] = [];
+
+    for (let ri = 0; ri < results.length; ri++) {
+      const result = results[ri]!;
+
+      sourceRanges.push({
+        name: this.#sourceNames[ri] ?? `source-${ri}`,
+        folder: this.#sourceFolders[ri],
+        start: result.start,
+        end: result.end,
+      });
+
       // Expand time range
       if (start == undefined || isLessThan(result.start, start)) {
         start = result.start;
@@ -102,6 +137,7 @@ export class McapMultiSource implements IIterableSource {
       profile,
       publishersByTopic,
       problems,
+      sourceRanges: sourceRanges.length > 1 ? sourceRanges : undefined,
     };
   }
 

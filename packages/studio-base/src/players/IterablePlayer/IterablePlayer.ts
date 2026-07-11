@@ -132,6 +132,7 @@ export class IterablePlayer implements Player {
   #providerTopics: Topic[] = [];
   #providerTopicStats = new Map<string, TopicStats>();
   #providerDatatypes: RosDatatypes = new Map();
+  #sourceRanges?: { name: string; folder?: string; start: Time; end: Time }[];
 
   #capabilities: string[] = [PlayerCapabilities.setSpeed, PlayerCapabilities.playbackControl];
   #profile: string | undefined;
@@ -468,6 +469,7 @@ export class IterablePlayer implements Player {
         publishersByTopic,
         datatypes,
         name,
+        sourceRanges,
       } = await this.#bufferedSource.initialize();
 
       // Prior to initialization, the seekTarget may have been set to an out-of-bounds value
@@ -482,6 +484,7 @@ export class IterablePlayer implements Player {
       this.#end = end;
       this.#publishedTopics = publishersByTopic;
       this.#providerDatatypes = datatypes;
+      this.#sourceRanges = sourceRanges;
       this.#name = name ?? this.#name;
 
       // Studio does not like duplicate topics or topics with different datatypes
@@ -789,6 +792,7 @@ export class IterablePlayer implements Player {
         topicStats: this.#providerTopicStats,
         datatypes: this.#providerDatatypes,
         publishedTopics: this.#publishedTopics,
+        sourceRanges: this.#sourceRanges,
       };
     }
 

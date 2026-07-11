@@ -2,13 +2,23 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import AddIcon from "@mui/icons-material/Add";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
-import DownloadIcon from "@mui/icons-material/Download";
+import RefreshIcon from "@mui/icons-material/Refresh";
+import RemoveIcon from "@mui/icons-material/Remove";
 import {
   Button,
+  ButtonGroup,
+  Checkbox,
   CircularProgress,
+  Divider,
   LinearProgress,
+  Link,
+  ListItemText,
+  Menu,
+  MenuItem,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
@@ -20,6 +30,7 @@ import Stack from "@foxglove/studio-base/components/Stack";
 import { usePlayerSelection } from "@foxglove/studio-base/context/PlayerSelectionContext";
 import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/useWorkspaceActions";
 import { storeDownloadedFiles } from "@foxglove/studio-base/dataSources/McapServerDataSourceFactory";
+import { exportFilesAsZip } from "@foxglove/studio-base/util/exportZip";
 
 import View from "./View";
 
@@ -95,13 +106,16 @@ const BAR_HEIGHT = 20;
 const BAR_Y_OFFSET = (ROW_HEIGHT - BAR_HEIGHT) / 2;
 const MIN_BAR_WIDTH = 4;
 const SELECTION_SPAN = 5 * 60; // 5 minutes in seconds
-const DOWNLOAD_DELAY_MS = 50; // brief pause between sequential downloads to ease server CPU
+const DOWNLOAD_CONCURRENCY = 4; // number of parallel file downloads
+const PROGRESS_THROTTLE_MS = 100; // minimum interval between progress UI updates
 
 const VIEW_DURATIONS: Record<ViewMode, number> = {
   day: 24 * 3600,
   week: 7 * 24 * 3600,
   month: 30 * 24 * 3600,
 };
+
+const NOW_DURATION = 3600; // 1 hour
 
 // Adaptive tick intervals based on visible duration
 const TICK_LEVELS = [
@@ -149,27 +163,6 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-// CRC-32 lookup table (IEEE polynomial)
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let j = 0; j < 8; j++) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    table[i] = c;
-  }
-  return table;
-})();
-
-function crc32(data: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (let i = 0; i < data.length; i++) {
-    crc = CRC_TABLE[(crc ^ data[i]!) & 0xff]! ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
 const useStyles = makeStyles()((theme) => ({
   container: {
     padding: theme.spacing(4),
@@ -183,7 +176,8 @@ const useStyles = makeStyles()((theme) => ({
   },
   timelineWrapper: {
     display: "flex",
-    overflow: "hidden",
+    overflowX: "hidden",
+    overflowY: "auto",
     border: `1px solid ${theme.palette.divider}`,
     borderRadius: theme.shape.borderRadius,
     flex: 1,
@@ -195,7 +189,6 @@ const useStyles = makeStyles()((theme) => ({
     minWidth: LABEL_WIDTH,
     flexShrink: 0,
     borderRight: `1px solid ${theme.palette.divider}`,
-    overflow: "hidden",
   },
   labelHeader: {
     height: HEADER_HEIGHT,
@@ -211,24 +204,12 @@ const useStyles = makeStyles()((theme) => ({
     alignItems: "center",
     padding: theme.spacing(0, 1.5),
     borderBottom: `1px solid ${theme.palette.divider}`,
-    cursor: "pointer",
-    userSelect: "none" as const,
-    "&:hover": {
-      backgroundColor: theme.palette.action.hover,
-    },
     "&:last-child": {
       borderBottom: "none",
     },
   },
-  labelRowSelected: {
-    backgroundColor: theme.palette.action.selected,
-    "&:hover": {
-      backgroundColor: theme.palette.action.selected,
-    },
-  },
   svgColumn: {
     flex: 1,
-    overflow: "hidden",
     minWidth: 0,
   },
   selectionInfo: {
@@ -298,6 +279,30 @@ type VisibleBar = {
   folderIdx: number;
 };
 
+// Assign files to lanes so overlapping recordings don't stack on top of each other.
+// Returns a Map from file path to lane index (0-based), and the total number of lanes.
+function assignLanes(files: McapFileIndex[]): { laneMap: Map<string, number>; laneCount: number } {
+  // files should already be sorted by startTime
+  const laneEnds: number[] = []; // end time of the last file in each lane
+  const laneMap = new Map<string, number>();
+  for (const file of files) {
+    let assigned = -1;
+    for (let i = 0; i < laneEnds.length; i++) {
+      if (laneEnds[i]! <= file.startTime) {
+        assigned = i;
+        laneEnds[i] = file.endTime;
+        break;
+      }
+    }
+    if (assigned === -1) {
+      assigned = laneEnds.length;
+      laneEnds.push(file.endTime);
+    }
+    laneMap.set(file.path, assigned);
+  }
+  return { laneMap, laneCount: Math.max(1, laneEnds.length) };
+}
+
 export default function McapTimeline(): JSX.Element {
   const { classes, theme } = useStyles();
   const { selectSource } = usePlayerSelection();
@@ -319,22 +324,13 @@ export default function McapTimeline(): JSX.Element {
 
   const [files, setFiles] = useState<McapFileIndex[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [indexProgress, setIndexProgress] = useState<{ indexed: number; total: number } | undefined>();
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Row (folder) selection state — unselected by default
-  const [selectedRows, setSelectedRows] = useState<Set<string>>(() => new Set());
-
-  const handleRowClick = useCallback((folderName: string) => {
-    setSelectedRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(folderName)) {
-        next.delete(folderName);
-      } else {
-        next.add(folderName);
-      }
-      return next;
-    });
-  }, []);
+  // All folder rows are always selected
+  const selectedRows = useMemo(() => new Set(files.map((f) => f.folder || "(root)")), [files]);
 
   // Click selection state — fixed 5-minute span
   const [selCenter, setSelCenter] = useState<number | undefined>();
@@ -351,6 +347,10 @@ export default function McapTimeline(): JSX.Element {
     y: number;
   } | null>(null);
 
+  // Open button dropdown state
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null);
+  const [excludedFiles, setExcludedFiles] = useState<Set<string>>(new Set());
+
   // URL-driven incidents
   const urlParams = useMemo(() => parseUrlIncidents(), []);
   const incidents = urlParams.incidents;
@@ -365,6 +365,8 @@ export default function McapTimeline(): JSX.Element {
   }, [incidents]);
 
   // Measure SVG column width with ResizeObserver
+  // Re-run when files appear (the div mounts) or disappear
+  const timelineVisible = files.length > 0;
   useEffect(() => {
     const el = svgColumnRef.current;
     if (!el) {
@@ -378,37 +380,95 @@ export default function McapTimeline(): JSX.Element {
     ro.observe(el);
     setSvgColumnWidth(el.clientWidth);
     return () => { ro.disconnect(); };
-  }, []);
+  }, [timelineVisible]);
 
   // Download state
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | undefined>();
   const downloadAbortRef = useRef<AbortController | undefined>();
+  const downloadStartRef = useRef<number>(0);
 
-  // Fetch index from server
+  // Fetch index from server (streaming NDJSON)
   useEffect(() => {
+    const isRefresh = refreshKey > 0;
     const controller = new AbortController();
-    setLoading(true);
     setError(undefined);
-    fetch(`${apiBase}/api/mcap/index`, { signal: controller.signal })
-      .then(async (res) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+      setIndexProgress(undefined);
+      setFiles([]);
+    }
+
+    (async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/mcap/index`, { signal: controller.signal });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
-        return (await res.json()) as McapFileIndex[];
-      })
-      .then((data) => {
-        setFiles(data);
+        const reader = res.body?.getReader();
+        if (!reader) {
+          throw new Error("No response body");
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let indexed = 0;
+        const accumulated: McapFileIndex[] = [];
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+
+          // Process complete lines
+          let newlineIdx: number;
+          while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, newlineIdx).trim();
+            buffer = buffer.slice(newlineIdx + 1);
+            if (line.length === 0) {
+              continue;
+            }
+            try {
+              const msg = JSON.parse(line) as Record<string, unknown>;
+              if ("total" in msg) {
+                if (!isRefresh) {
+                  setIndexProgress({ indexed: 0, total: msg.total as number });
+                }
+              } else if ("file" in msg) {
+                accumulated.push(msg.file as McapFileIndex);
+                indexed++;
+                // Stream progress to UI on initial load only
+                if (!isRefresh && indexed % 10 === 0) {
+                  setFiles([...accumulated]);
+                  setIndexProgress((prev) => prev ? { ...prev, indexed } : undefined);
+                }
+              }
+            } catch {
+              // skip unparseable lines
+            }
+          }
+        }
+
+        // Swap in final results
+        setFiles([...accumulated]);
         setLoading(false);
-      })
-      .catch((err: Error) => {
-        if (err.name === "AbortError") {
+        setRefreshing(false);
+        setIndexProgress(undefined);
+      } catch (err: unknown) {
+        if ((err as Error).name === "AbortError") {
           return;
         }
-        setError(err.message);
+        setError((err as Error).message);
         setLoading(false);
-      });
+        setRefreshing(false);
+      }
+    })();
+
     return () => { controller.abort(); };
-  }, [apiBase]);
+  }, [apiBase, refreshKey]);
 
   // Group files by folder
   const folders = useMemo(() => {
@@ -437,7 +497,7 @@ export default function McapTimeline(): JSX.Element {
     return undefined;
   }, [viewDuration]);
 
-  // Auto-fit: center view on data when files load, or on URL center time
+  // Auto-fit: center view when files first load
   const hasAutoFit = useRef(false);
   useEffect(() => {
     if (files.length === 0 || hasAutoFit.current) {
@@ -451,21 +511,39 @@ export default function McapTimeline(): JSX.Element {
       setViewDuration(dur);
       setViewStart(urlParams.centerTime - dur / 2);
       setSelCenter(urlParams.centerTime);
-      // Auto-select all rows so files in the window are immediately selected
-      const allFolders = new Set(files.map((f) => f.folder || "(root)"));
-      setSelectedRows(allFolders);
     } else {
-      const minTime = Math.min(...files.map((f) => f.startTime));
-      const maxTime = Math.max(...files.map((f) => f.endTime));
-      const dataCenter = (minTime + maxTime) / 2;
-      setViewStart(dataCenter - viewDuration / 2);
+      // Default: center on "now" with day view, selection at now
+      const now = Date.now() / 1000;
+      setViewDuration(VIEW_DURATIONS.day);
+      setViewStart(now - VIEW_DURATIONS.day / 2);
+      setSelCenter(now);
     }
-  }, [files, viewDuration, urlParams.centerTime]);
+  }, [files, urlParams.centerTime]);
+
+  // Compute lane assignments per folder (for parallel recordings)
+  const folderLanes = useMemo(() => {
+    return folders.map(([, folderFiles]) => assignLanes(folderFiles));
+  }, [folders]);
+
+  // Cumulative Y offset per folder (each folder may have multiple lanes)
+  const folderYOffsets = useMemo(() => {
+    const offsets: number[] = [];
+    let y = 0;
+    for (const { laneCount } of folderLanes) {
+      offsets.push(y);
+      y += laneCount * ROW_HEIGHT;
+    }
+    return offsets;
+  }, [folderLanes]);
+
+  const totalRowsHeight = folderYOffsets.length > 0
+    ? folderYOffsets[folderYOffsets.length - 1]! + folderLanes[folderLanes.length - 1]!.laneCount * ROW_HEIGHT
+    : 0;
 
   // SVG dimensions — add an incident row at top when incidents are present
   const svgWidth = Math.max(svgColumnWidth, 200);
   const incidentRowOffset = hasIncidents ? INCIDENT_ROW_HEIGHT : 0;
-  const svgHeight = HEADER_HEIGHT + incidentRowOffset + folders.length * ROW_HEIGHT;
+  const svgHeight = HEADER_HEIGHT + incidentRowOffset + totalRowsHeight;
 
   // Time-to-pixel conversion
   const timeToX = useCallback(
@@ -478,13 +556,16 @@ export default function McapTimeline(): JSX.Element {
     const bars: VisibleBar[] = [];
     for (let folderIdx = 0; folderIdx < folders.length; folderIdx++) {
       const [, folderFiles] = folders[folderIdx]!;
+      const { laneMap } = folderLanes[folderIdx]!;
       const color = COLORS[folderIdx % COLORS.length]!;
-      const rowY = HEADER_HEIGHT + incidentRowOffset + folderIdx * ROW_HEIGHT + BAR_Y_OFFSET;
+      const folderBaseY = HEADER_HEIGHT + incidentRowOffset + folderYOffsets[folderIdx]!;
 
       for (const file of folderFiles) {
         if (file.endTime < viewStart || file.startTime > viewEnd) {
           continue;
         }
+        const lane = laneMap.get(file.path) ?? 0;
+        const rowY = folderBaseY + lane * ROW_HEIGHT + BAR_Y_OFFSET;
         const x1 = Math.max(0, timeToX(file.startTime));
         const x2 = Math.min(svgWidth, timeToX(file.endTime));
         const barWidth = Math.max(MIN_BAR_WIDTH, x2 - x1);
@@ -492,7 +573,7 @@ export default function McapTimeline(): JSX.Element {
       }
     }
     return bars;
-  }, [folders, viewStart, viewEnd, timeToX, svgWidth]);
+  }, [folders, folderLanes, folderYOffsets, viewStart, viewEnd, timeToX, svgWidth]);
 
   // Generate tick marks
   const tickConfig = useMemo(() => getTickConfig(viewDuration), [viewDuration]);
@@ -505,6 +586,14 @@ export default function McapTimeline(): JSX.Element {
     return result;
   }, [viewStart, viewEnd, tickConfig.interval]);
 
+  // Jump to now
+  const jumpToNow = useCallback(() => {
+    const now = Date.now() / 1000;
+    setViewDuration(NOW_DURATION);
+    setViewStart(now - NOW_DURATION / 2);
+    setSelCenter(now);
+  }, []);
+
   // Pan handlers
   const panAmount = viewDuration * 0.25;
   const panLeft = useCallback(() => {
@@ -514,31 +603,21 @@ export default function McapTimeline(): JSX.Element {
     setViewStart((prev) => prev + panAmount);
   }, [panAmount]);
 
-  // Mouse wheel zoom
-  const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
-      e.preventDefault();
-      const svg = svgRef.current;
-      if (!svg) {
-        return;
-      }
-      const rect = svg.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseTime = viewStart + (mouseX / svgWidth) * viewDuration;
-
-      const zoomFactor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
-      const minDuration = 60;
-      const maxDuration = 365 * 86400;
-      const newDuration = Math.max(minDuration, Math.min(maxDuration, viewDuration * zoomFactor));
-
-      const ratio = mouseX / svgWidth;
-      const newStart = mouseTime - ratio * newDuration;
-
-      setViewDuration(newDuration);
-      setViewStart(newStart);
-    },
-    [viewStart, viewDuration, svgWidth],
-  );
+  // Zoom buttons — zoom around the view center
+  const minDuration = 60;
+  const maxDuration = 365 * 86400;
+  const zoomIn = useCallback(() => {
+    const center = viewStart + viewDuration / 2;
+    const newDuration = Math.max(minDuration, viewDuration / 1.5);
+    setViewDuration(newDuration);
+    setViewStart(center - newDuration / 2);
+  }, [viewStart, viewDuration]);
+  const zoomOut = useCallback(() => {
+    const center = viewStart + viewDuration / 2;
+    const newDuration = Math.min(maxDuration, viewDuration * 1.5);
+    setViewDuration(newDuration);
+    setViewStart(center - newDuration / 2);
+  }, [viewStart, viewDuration]);
 
   // Jump to a specific date
   const handleDateJump = useCallback(
@@ -571,6 +650,8 @@ export default function McapTimeline(): JSX.Element {
       }
       const x = e.clientX - rect.left;
       const time = viewStart + (x / svgWidth) * viewDuration;
+
+      // Place time selection cursor
       startTransition(() => {
         if (selCenter != undefined && Math.abs(time - selCenter) < SELECTION_SPAN / 2) {
           setSelCenter(undefined);
@@ -596,6 +677,7 @@ export default function McapTimeline(): JSX.Element {
       const my = e.clientY - svgRect.top;
 
       const wrapperRect = wrapper.getBoundingClientRect();
+      const scrollTop = wrapper.scrollTop;
 
       // Check incident markers first
       if (hasIncidents) {
@@ -607,7 +689,7 @@ export default function McapTimeline(): JSX.Element {
             setTooltipState({
               incident: inc,
               x: e.clientX - wrapperRect.left + 12,
-              y: e.clientY - wrapperRect.top - 10,
+              y: e.clientY - wrapperRect.top + scrollTop - 10,
             });
             return;
           }
@@ -626,7 +708,7 @@ export default function McapTimeline(): JSX.Element {
         setTooltipState({
           file: found,
           x: e.clientX - wrapperRect.left + 12,
-          y: e.clientY - wrapperRect.top - 10,
+          y: e.clientY - wrapperRect.top + scrollTop - 10,
         });
       } else {
         setTooltipState(null);
@@ -661,89 +743,134 @@ export default function McapTimeline(): JSX.Element {
     });
   }, [files, selectionRange, selectedRows]);
 
+  // Reset excluded files when the time selection changes
+  useEffect(() => {
+    setExcludedFiles(new Set());
+  }, [selCenter]);
+
+  // Files after user exclusions via dropdown
+  const effectiveFiles = useMemo(
+    () => selectedFiles.filter((f) => !excludedFiles.has(f.path)),
+    [selectedFiles, excludedFiles],
+  );
+
   const totalSize = useMemo(
-    () => selectedFiles.reduce((sum, f) => sum + f.size, 0),
-    [selectedFiles],
+    () => effectiveFiles.reduce((sum, f) => sum + f.size, 0),
+    [effectiveFiles],
   );
 
   const selectedPaths = useMemo(() => new Set(selectedFiles.map((f) => f.path)), [selectedFiles]);
 
-  // Download selected files sequentially with progress tracking.
+  // Download effective files in parallel with throttled progress updates.
   // Returns the downloaded File[] or undefined if aborted/failed.
   const downloadFiles = useCallback(async (): Promise<File[] | undefined> => {
-    if (selectedFiles.length === 0) {
+    if (effectiveFiles.length === 0) {
       return undefined;
     }
 
     const abortController = new AbortController();
     downloadAbortRef.current = abortController;
 
-    const grandTotal = selectedFiles.reduce((sum, f) => sum + f.size, 0);
-    let completedBytes = 0;
-    const downloadedFiles: File[] = [];
+    const grandTotal = effectiveFiles.reduce((sum, f) => sum + f.size, 0);
 
-    try {
-      for (let i = 0; i < selectedFiles.length; i++) {
-        if (abortController.signal.aborted) {
-          return undefined;
-        }
+    // Per-file progress tracking (shared across parallel workers)
+    const fileLoaded = new Array<number>(effectiveFiles.length).fill(0);
+    const fileComplete = new Array<boolean>(effectiveFiles.length).fill(false);
+    let lastProgressUpdate = 0;
 
-        const fileInfo = selectedFiles[i]!;
-        const url = `${apiBase}/api/mcap/files/${encodeURIComponent(fileInfo.path)}`;
+    const flushProgress = (force: boolean) => {
+      const now = Date.now();
+      if (!force && now - lastProgressUpdate < PROGRESS_THROTTLE_MS) {
+        return;
+      }
+      lastProgressUpdate = now;
 
-        setDownloadProgress({
-          fileIndex: i,
-          totalFiles: selectedFiles.length,
-          currentFilename: fileInfo.filename,
-          currentLoaded: 0,
-          currentTotal: fileInfo.size,
-          completedBytes,
-          grandTotal,
-        });
-
-        const response = await fetch(url, { signal: abortController.signal });
-        if (!response.ok) {
-          throw new Error(`Failed to download ${fileInfo.filename}: HTTP ${response.status}`);
-        }
-
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error(`No response body for ${fileInfo.filename}`);
-        }
-
-        const chunks: Uint8Array[] = [];
-        let loaded = 0;
-
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) {
-            break;
-          }
-          chunks.push(value);
-          loaded += value.byteLength;
-
-          setDownloadProgress({
-            fileIndex: i,
-            totalFiles: selectedFiles.length,
-            currentFilename: fileInfo.filename,
-            currentLoaded: loaded,
-            currentTotal: fileInfo.size,
-            completedBytes,
-            grandTotal,
-          });
-        }
-
-        const blob = new Blob(chunks);
-        downloadedFiles.push(new File([blob], fileInfo.filename));
-        completedBytes += loaded;
-
-        // Brief pause between files to ease server CPU load
-        if (i < selectedFiles.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_DELAY_MS));
+      const totalLoaded = fileLoaded.reduce((a, b) => a + b, 0);
+      // Find the first incomplete file for the label
+      let activeIdx = effectiveFiles.length - 1;
+      for (let j = 0; j < effectiveFiles.length; j++) {
+        if (!fileComplete[j]) {
+          activeIdx = j;
+          break;
         }
       }
+      const completedCount = fileComplete.filter(Boolean).length;
 
-      return downloadedFiles;
+      setDownloadProgress({
+        fileIndex: completedCount,
+        totalFiles: effectiveFiles.length,
+        currentFilename: effectiveFiles[activeIdx]!.filename,
+        currentLoaded: 0,
+        currentTotal: 0,
+        completedBytes: totalLoaded,
+        grandTotal,
+      });
+    };
+
+    // Download a single file, updating shared progress
+    const downloadOne = async (idx: number): Promise<File> => {
+      const fileInfo = effectiveFiles[idx]!;
+      const url = `${apiBase}/api/mcap/files/${encodeURIComponent(fileInfo.path)}`;
+
+      const response = await fetch(url, { signal: abortController.signal });
+      if (!response.ok) {
+        throw new Error(`Failed to download ${fileInfo.filename}: HTTP ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error(`No response body for ${fileInfo.filename}`);
+      }
+
+      const chunks: Uint8Array[] = [];
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        chunks.push(value);
+        fileLoaded[idx] += value.byteLength;
+        flushProgress(false);
+      }
+
+      fileComplete[idx] = true;
+      flushProgress(false);
+
+      const blob = new Blob(chunks);
+      const fileName = fileInfo.folder ? `${fileInfo.folder}/${fileInfo.filename}` : fileInfo.filename;
+      return new File([blob], fileName);
+    };
+
+    try {
+      downloadStartRef.current = Date.now();
+      flushProgress(true);
+
+      // Run downloads with bounded concurrency
+      const results = new Array<File>(effectiveFiles.length);
+      let nextIdx = 0;
+
+      const worker = async () => {
+        while (nextIdx < effectiveFiles.length) {
+          if (abortController.signal.aborted) {
+            return;
+          }
+          const idx = nextIdx++;
+          results[idx] = await downloadOne(idx);
+        }
+      };
+
+      const workers = Array.from(
+        { length: Math.min(DOWNLOAD_CONCURRENCY, effectiveFiles.length) },
+        () => worker(),
+      );
+      await Promise.all(workers);
+
+      if (abortController.signal.aborted) {
+        return undefined;
+      }
+
+      flushProgress(true);
+      return results.filter((f): f is File => f != undefined);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         return undefined;
@@ -754,7 +881,7 @@ export default function McapTimeline(): JSX.Element {
       setDownloadProgress(undefined);
       downloadAbortRef.current = undefined;
     }
-  }, [apiBase, selectedFiles]);
+  }, [apiBase, effectiveFiles]);
 
   // Download files and open in player
   const onOpen = useCallback(async () => {
@@ -777,96 +904,7 @@ export default function McapTimeline(): JSX.Element {
     if (!downloaded || downloaded.length === 0) {
       return;
     }
-
-    // Build a ZIP file in memory using Store mode (no compression — MCAP is already compressed)
-    const zipParts: Uint8Array[] = [];
-    const centralDir: Uint8Array[] = [];
-    let offset = 0;
-    const encoder = new TextEncoder();
-
-    for (const file of downloaded) {
-      const nameBytes = encoder.encode(file.name);
-      const fileData = new Uint8Array(await file.arrayBuffer());
-
-      // CRC-32 computation
-      const crc = crc32(fileData);
-
-      // Local file header (30 bytes + name)
-      const localHeader = new ArrayBuffer(30 + nameBytes.length);
-      const lv = new DataView(localHeader);
-      lv.setUint32(0, 0x04034b50, true);   // signature
-      lv.setUint16(4, 20, true);             // version needed
-      lv.setUint16(6, 0, true);              // flags
-      lv.setUint16(8, 0, true);              // compression: Store
-      lv.setUint16(10, 0, true);             // mod time
-      lv.setUint16(12, 0, true);             // mod date
-      lv.setUint32(14, crc, true);           // crc-32
-      lv.setUint32(18, fileData.length, true); // compressed size
-      lv.setUint32(22, fileData.length, true); // uncompressed size
-      lv.setUint16(26, nameBytes.length, true); // filename length
-      lv.setUint16(28, 0, true);             // extra field length
-      new Uint8Array(localHeader).set(nameBytes, 30);
-
-      const localHeaderBytes = new Uint8Array(localHeader);
-      zipParts.push(localHeaderBytes);
-      zipParts.push(fileData);
-
-      // Central directory entry (46 bytes + name)
-      const cdEntry = new ArrayBuffer(46 + nameBytes.length);
-      const cv = new DataView(cdEntry);
-      cv.setUint32(0, 0x02014b50, true);    // signature
-      cv.setUint16(4, 20, true);              // version made by
-      cv.setUint16(6, 20, true);              // version needed
-      cv.setUint16(8, 0, true);               // flags
-      cv.setUint16(10, 0, true);              // compression: Store
-      cv.setUint16(12, 0, true);              // mod time
-      cv.setUint16(14, 0, true);              // mod date
-      cv.setUint32(16, crc, true);            // crc-32
-      cv.setUint32(20, fileData.length, true); // compressed size
-      cv.setUint32(24, fileData.length, true); // uncompressed size
-      cv.setUint16(28, nameBytes.length, true); // filename length
-      cv.setUint16(30, 0, true);              // extra field length
-      cv.setUint16(32, 0, true);              // comment length
-      cv.setUint16(34, 0, true);              // disk number
-      cv.setUint16(36, 0, true);              // internal attrs
-      cv.setUint32(38, 0, true);              // external attrs
-      cv.setUint32(42, offset, true);         // local header offset
-      new Uint8Array(cdEntry).set(nameBytes, 46);
-
-      centralDir.push(new Uint8Array(cdEntry));
-      offset += localHeaderBytes.length + fileData.length;
-    }
-
-    // Central directory
-    const cdOffset = offset;
-    let cdSize = 0;
-    for (const entry of centralDir) {
-      zipParts.push(entry);
-      cdSize += entry.length;
-    }
-
-    // End of central directory (22 bytes)
-    const eocd = new ArrayBuffer(22);
-    const ev = new DataView(eocd);
-    ev.setUint32(0, 0x06054b50, true);       // signature
-    ev.setUint16(4, 0, true);                 // disk number
-    ev.setUint16(6, 0, true);                 // cd start disk
-    ev.setUint16(8, downloaded.length, true);  // entries on disk
-    ev.setUint16(10, downloaded.length, true); // total entries
-    ev.setUint32(12, cdSize, true);            // cd size
-    ev.setUint32(16, cdOffset, true);          // cd offset
-    ev.setUint16(20, 0, true);                 // comment length
-    zipParts.push(new Uint8Array(eocd));
-
-    const zipBlob = new Blob(zipParts, { type: "application/zip" });
-    const url = URL.createObjectURL(zipBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "recordings.zip";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    await exportFilesAsZip(downloaded);
   }, [downloadFiles]);
 
   // Cancel download on unmount
@@ -876,23 +914,122 @@ export default function McapTimeline(): JSX.Element {
 
   const isDownloading = downloadProgress != undefined;
 
+  const customFooter = (
+    <Stack
+      direction="row"
+      justifyContent="space-between"
+      alignItems="center"
+      paddingX={4}
+      paddingBottom={4}
+      paddingTop={2}
+    >
+      <Button
+        startIcon={<ChevronLeftIcon fontSize="large" />}
+        onClick={() => { dialogActions.dataSource.open("start"); }}
+      >
+        Back
+      </Button>
+
+      <Stack direction="column" alignItems="flex-end" gap={0.5}>
+        <Stack direction="row" gap={2} alignItems="center">
+          <Button
+            color="inherit"
+            variant="outlined"
+            onClick={() => { dialogActions.dataSource.close(); }}
+          >
+            Cancel
+          </Button>
+          <ButtonGroup variant="contained">
+            <Button
+              onClick={onOpen}
+              disabled={isDownloading || effectiveFiles.length === 0}
+            >
+              Open{effectiveFiles.length > 0 ? ` (${effectiveFiles.length})` : ""}
+            </Button>
+            <Button
+              size="small"
+              disabled={isDownloading || selectedFiles.length === 0}
+              onClick={(e) => { setMenuAnchorEl(e.currentTarget); }}
+              sx={{ px: 0.5, minWidth: 0 }}
+            >
+              <ArrowDropDownIcon />
+            </Button>
+          </ButtonGroup>
+          <Menu
+            anchorEl={menuAnchorEl}
+            open={menuAnchorEl != null}
+            onClose={() => { setMenuAnchorEl(null); }}
+            anchorOrigin={{ vertical: "top", horizontal: "right" }}
+            transformOrigin={{ vertical: "bottom", horizontal: "right" }}
+            slotProps={{ paper: { sx: { maxHeight: 300, minWidth: 280 } } }}
+          >
+            {selectedFiles.map((f) => (
+              <MenuItem
+                key={f.path}
+                dense
+                onClick={() => {
+                  setExcludedFiles((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(f.path)) {
+                      next.delete(f.path);
+                    } else {
+                      next.add(f.path);
+                    }
+                    return next;
+                  });
+                }}
+              >
+                <Checkbox
+                  checked={!excludedFiles.has(f.path)}
+                  size="small"
+                  sx={{ mr: 1, p: 0 }}
+                />
+                <ListItemText
+                  primary={f.filename}
+                  primaryTypographyProps={{ variant: "body2", noWrap: true }}
+                />
+              </MenuItem>
+            ))}
+            {selectedFiles.length > 0 && <Divider />}
+            <MenuItem
+              dense
+              onClick={() => {
+                if (excludedFiles.size === 0) {
+                  setExcludedFiles(new Set(selectedFiles.map((f) => f.path)));
+                } else {
+                  setExcludedFiles(new Set());
+                }
+              }}
+            >
+              <ListItemText
+                primary={excludedFiles.size === 0 ? "Deselect all" : "Select all"}
+                primaryTypographyProps={{ variant: "body2", fontWeight: 500 }}
+              />
+            </MenuItem>
+          </Menu>
+        </Stack>
+        {effectiveFiles.length > 0 && !isDownloading && (
+          <Link
+            component="button"
+            variant="caption"
+            underline="hover"
+            color="text.secondary"
+            onClick={onExport}
+          >
+            or export as ZIP
+          </Link>
+        )}
+      </Stack>
+    </Stack>
+  );
+
   return (
-    <View onOpen={!isDownloading && selectedFiles.length > 0 ? onOpen : undefined}>
+    <View footer={customFooter}>
       <Stack className={classes.container} style={{ position: "relative" }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" style={{ marginBottom: 16 }}>
           <Typography variant="h3" fontWeight={600}>
-            Browse recordings
+            Recordings
           </Typography>
-          {selectedFiles.length > 0 && !isDownloading && (
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<DownloadIcon />}
-              onClick={onExport}
-            >
-              Export ZIP
-            </Button>
-          )}
         </Stack>
 
         {/* Toolbar */}
@@ -903,6 +1040,10 @@ export default function McapTimeline(): JSX.Element {
           className={classes.toolbar}
         >
           <Stack direction="row" alignItems="center" gap={2}>
+            <ToggleButton value="now" size="small" selected={false} onClick={jumpToNow}>
+              Now
+            </ToggleButton>
+
             <ToggleButtonGroup
               value={activePreset ?? false}
               exclusive
@@ -921,6 +1062,24 @@ export default function McapTimeline(): JSX.Element {
               <ToggleButton value="month">Month</ToggleButton>
             </ToggleButtonGroup>
 
+            <input
+              type="date"
+              value={dateInput}
+              onChange={(e) => { handleDateJump(e.target.value); }}
+              className={classes.dateInput}
+            />
+          </Stack>
+
+          <Stack direction="row" alignItems="center" gap={2}>
+            <Stack direction="row" gap={0.5}>
+              <ToggleButton value="zoomIn" size="small" onClick={zoomIn} title="Zoom in">
+                <AddIcon />
+              </ToggleButton>
+              <ToggleButton value="zoomOut" size="small" onClick={zoomOut} title="Zoom out">
+                <RemoveIcon />
+              </ToggleButton>
+            </Stack>
+
             <Stack direction="row" gap={0.5}>
               <ToggleButton value="left" size="small" onClick={panLeft}>
                 <ChevronLeftIcon />
@@ -930,18 +1089,35 @@ export default function McapTimeline(): JSX.Element {
               </ToggleButton>
             </Stack>
 
-            <input
-              type="date"
-              value={dateInput}
-              onChange={(e) => { handleDateJump(e.target.value); }}
-              className={classes.dateInput}
-            />
+            <ToggleButton
+              value="refresh"
+              size="small"
+              selected={false}
+              disabled={refreshing}
+              onClick={() => { setRefreshKey((k) => k + 1); }}
+              title="Refresh index"
+            >
+              <RefreshIcon sx={refreshing ? { animation: "spin 1s linear infinite", "@keyframes spin": { "100%": { transform: "rotate(360deg)" } } } : undefined} />
+            </ToggleButton>
           </Stack>
         </Stack>
 
-        {loading && (
+        {loading && indexProgress == undefined && (
           <Stack alignItems="center" padding={4} flex={1} justifyContent="center">
             <CircularProgress />
+          </Stack>
+        )}
+
+        {indexProgress != null && indexProgress.total > 0 && loading && (
+          <Stack direction="row" alignItems="center" gap={1.5} paddingBottom={1}>
+            <LinearProgress
+              variant="determinate"
+              value={(indexProgress.indexed / indexProgress.total) * 100}
+              sx={{ flex: 1, height: 6, borderRadius: 3 }}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
+              Indexing {indexProgress.indexed} / {indexProgress.total} recordings
+            </Typography>
           </Stack>
         )}
 
@@ -954,7 +1130,7 @@ export default function McapTimeline(): JSX.Element {
         )}
 
         {/* Timeline */}
-        {!loading && files.length > 0 && <div ref={wrapperRef} className={classes.timelineWrapper}>
+        {files.length > 0 && <div ref={wrapperRef} className={classes.timelineWrapper}>
           {/* Left: folder labels */}
           <div className={classes.labelColumn}>
             <div className={classes.labelHeader}>
@@ -984,24 +1160,22 @@ export default function McapTimeline(): JSX.Element {
               </div>
             )}
             {folders.map(([folderName], i) => {
-              const isRowSelected = selectedRows.has(folderName);
+              const { laneCount } = folderLanes[i]!;
               return (
                 <div
                   key={folderName}
-                  className={`${classes.labelRow} ${isRowSelected ? classes.labelRowSelected : ""}`}
-                  onClick={() => { handleRowClick(folderName); }}
+                  className={classes.labelRow}
+                  style={{ height: laneCount * ROW_HEIGHT, cursor: "default" }}
                 >
                   <span
                     style={{
                       width: 8,
                       height: 8,
                       borderRadius: "50%",
-                      backgroundColor: isRowSelected ? COLORS[i % COLORS.length] : "transparent",
-                      border: `2px solid ${COLORS[i % COLORS.length]!}`,
+                      backgroundColor: COLORS[i % COLORS.length],
                       marginRight: 8,
                       flexShrink: 0,
                       display: "inline-block",
-                      boxSizing: "border-box",
                     }}
                   />
                   <Typography variant="body2" noWrap title={folderName}>
@@ -1020,7 +1194,6 @@ export default function McapTimeline(): JSX.Element {
               height={svgHeight}
               style={{ display: "block", cursor: "pointer", userSelect: "none" }}
               onClick={handleSvgClick}
-              onWheel={handleWheel}
               onMouseMove={handleMouseMove}
               onMouseLeave={handleMouseLeave}
             >
@@ -1046,21 +1219,15 @@ export default function McapTimeline(): JSX.Element {
 
               {/* Row backgrounds */}
               {folders.map(([folderName], i) => {
-                const isRowSelected = selectedRows.has(folderName);
+                const { laneCount } = folderLanes[i]!;
                 return (
                   <rect
                     key={folderName}
                     x={0}
-                    y={HEADER_HEIGHT + incidentRowOffset + i * ROW_HEIGHT}
+                    y={HEADER_HEIGHT + incidentRowOffset + folderYOffsets[i]!}
                     width={svgWidth}
-                    height={ROW_HEIGHT}
-                    fill={
-                      isRowSelected
-                        ? theme.palette.action.selected
-                        : i % 2 === 0
-                          ? "transparent"
-                          : theme.palette.action.hover
-                    }
+                    height={laneCount * ROW_HEIGHT}
+                    fill={i % 2 === 0 ? "transparent" : theme.palette.action.hover}
                   />
                 );
               })}
@@ -1078,17 +1245,20 @@ export default function McapTimeline(): JSX.Element {
               )}
 
               {/* Row dividers */}
-              {folders.map(([folderName], i) => (
-                <line
-                  key={`div-${folderName}`}
-                  x1={0}
-                  y1={HEADER_HEIGHT + incidentRowOffset + (i + 1) * ROW_HEIGHT}
-                  x2={svgWidth}
-                  y2={HEADER_HEIGHT + incidentRowOffset + (i + 1) * ROW_HEIGHT}
-                  stroke={theme.palette.divider}
-                  strokeWidth={1}
-                />
-              ))}
+              {folders.map(([folderName], i) => {
+                const divY = HEADER_HEIGHT + incidentRowOffset + folderYOffsets[i]! + folderLanes[i]!.laneCount * ROW_HEIGHT;
+                return (
+                  <line
+                    key={`div-${folderName}`}
+                    x1={0}
+                    y1={divY}
+                    x2={svgWidth}
+                    y2={divY}
+                    stroke={theme.palette.divider}
+                    strokeWidth={1}
+                  />
+                );
+              })}
 
               {/* Header bottom border */}
               <line
@@ -1130,8 +1300,6 @@ export default function McapTimeline(): JSX.Element {
 
               {/* File bars */}
               {visibleBars.map((bar) => {
-                const folderName = folders[bar.folderIdx]![0];
-                const isRowActive = selectedRows.has(folderName);
                 const isFileSelected = selectedPaths.has(bar.file.path);
                 return (
                   <rect
@@ -1143,7 +1311,7 @@ export default function McapTimeline(): JSX.Element {
                     rx={3}
                     ry={3}
                     fill={bar.color}
-                    opacity={isFileSelected ? 1 : isRowActive ? 0.7 : 0.3}
+                    opacity={isFileSelected ? 1 : 0.7}
                     stroke={isFileSelected ? theme.palette.common.white : "none"}
                     strokeWidth={isFileSelected ? 2 : 0}
                   />
@@ -1185,6 +1353,25 @@ export default function McapTimeline(): JSX.Element {
                     </g>
                   );
                 })}
+
+              {/* "Now" marker line */}
+              {(() => {
+                const nowX = timeToX(Date.now() / 1000);
+                if (nowX < 0 || nowX > svgWidth) {
+                  return null;
+                }
+                return (
+                  <line
+                    x1={nowX}
+                    y1={HEADER_HEIGHT}
+                    x2={nowX}
+                    y2={svgHeight}
+                    stroke="#E5484D"
+                    strokeWidth={1.5}
+                    style={{ pointerEvents: "none" }}
+                  />
+                );
+              })()}
 
               {/* Selection overlay */}
               {selectionRange && (
@@ -1251,33 +1438,39 @@ export default function McapTimeline(): JSX.Element {
                 Downloading recordings
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                File {downloadProgress.fileIndex + 1} of {downloadProgress.totalFiles}
-                {" — "}
-                {downloadProgress.currentFilename}
+                {downloadProgress.fileIndex} of {downloadProgress.totalFiles} files complete
               </Typography>
               <LinearProgress
                 variant="determinate"
                 value={
                   downloadProgress.grandTotal > 0
-                    ? ((downloadProgress.completedBytes + downloadProgress.currentLoaded) / downloadProgress.grandTotal) * 100
+                    ? (downloadProgress.completedBytes / downloadProgress.grandTotal) * 100
                     : 0
                 }
                 sx={{ width: "100%", maxWidth: 400, height: 8, borderRadius: 4 }}
               />
               <Typography variant="body2" color="text.secondary">
-                {formatFileSize(downloadProgress.completedBytes + downloadProgress.currentLoaded)}
+                {formatFileSize(downloadProgress.completedBytes)}
                 {" / "}
                 {formatFileSize(downloadProgress.grandTotal)}
+                {(() => {
+                  const elapsed = (Date.now() - downloadStartRef.current) / 1000;
+                  if (elapsed < 0.5 || downloadProgress.completedBytes === 0) {
+                    return null;
+                  }
+                  const bytesPerSec = downloadProgress.completedBytes / elapsed;
+                  return ` · ${formatFileSize(bytesPerSec)}/s`;
+                })()}
               </Typography>
             </div>
           )}
         </div>}
 
         {/* Selection info */}
-        {selectedFiles.length > 0 && !isDownloading && (
+        {effectiveFiles.length > 0 && !isDownloading && (
           <Stack direction="row" alignItems="center" gap={2} className={classes.selectionInfo}>
             <Typography variant="body2" color="text.secondary">
-              {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""} selected
+              {effectiveFiles.length} file{effectiveFiles.length !== 1 ? "s" : ""} selected
               {" · "}
               {formatFileSize(totalSize)}
               {selectionRange && (

@@ -366,89 +366,106 @@ func main() {
 		http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
 	})
 
-	// API: index MCAP files (returns start/end timestamps per file)
+	// API: index MCAP files — streams NDJSON for progressive loading.
+	// Line 1: {"total": N}          — count of .mcap files found
+	// Lines:  {"file": {...}}        — one per indexed file
+	// Last:   {"done": true}
 	mux.HandleFunc("/api/mcap/index", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		var results []McapFileIndex
-		seenPaths := make(map[string]struct{})
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
 
-		err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Cache-Control", "no-cache")
+
+		enc := json.NewEncoder(w)
+
+		// Phase 1: quick walk to count .mcap files
+		type mcapEntry struct {
+			path    string
+			relPath string
+			info    os.FileInfo
+		}
+		var entries []mcapEntry
+		filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				log.Printf("Warning: could not access %s: %v", path, err)
 				return nil
 			}
-			if d.IsDir() {
+			if d.IsDir() || !strings.HasSuffix(strings.ToLower(d.Name()), ".mcap") {
 				return nil
 			}
-			if !strings.HasSuffix(strings.ToLower(d.Name()), ".mcap") {
-				return nil
-			}
-
 			info, err := d.Info()
 			if err != nil {
 				return nil
 			}
 			relPath, _ := filepath.Rel(absPath, path)
-			seenPaths[relPath] = struct{}{}
+			entries = append(entries, mcapEntry{path: path, relPath: relPath, info: info})
+			return nil
+		})
 
-			modTimeStr := info.ModTime().UTC().Format(time.RFC3339)
+		enc.Encode(map[string]int{"total": len(entries)})
+		flusher.Flush()
 
-			// Check SQLite cache
+		// Phase 2: index each file and stream results
+		seenPaths := make(map[string]struct{}, len(entries))
+		for _, entry := range entries {
+			seenPaths[entry.relPath] = struct{}{}
+			modTimeStr := entry.info.ModTime().UTC().Format(time.RFC3339)
+
 			var startNs, endNs uint64
 			cacheHit := false
 			if indexDB != nil {
-				err = indexDB.QueryRow(
+				err := indexDB.QueryRow(
 					`SELECT start_time, end_time FROM mcap_index WHERE path = ? AND mod_time = ? AND size = ?`,
-					relPath, modTimeStr, info.Size(),
+					entry.relPath, modTimeStr, entry.info.Size(),
 				).Scan(&startNs, &endNs)
 				cacheHit = err == nil
 			}
 
 			if !cacheHit {
-				// Cache miss — read time range from MCAP summary
-				startNs, endNs, err = getMcapTimeRange(path)
-				if err != nil {
-					log.Printf("Warning: could not index %s: %v", relPath, err)
-					return nil
+				var indexErr error
+				startNs, endNs, indexErr = getMcapTimeRange(entry.path)
+				if indexErr != nil {
+					log.Printf("Warning: could not index %s: %v", entry.relPath, indexErr)
+					continue
 				}
 
-				// Upsert into SQLite cache
 				if indexDB != nil {
-					_, err = indexDB.Exec(
+					_, indexErr = indexDB.Exec(
 						`INSERT OR REPLACE INTO mcap_index (path, mod_time, size, start_time, end_time) VALUES (?, ?, ?, ?, ?)`,
-						relPath, modTimeStr, info.Size(), startNs, endNs,
+						entry.relPath, modTimeStr, entry.info.Size(), startNs, endNs,
 					)
-					if err != nil {
-						log.Printf("Warning: could not cache index for %s: %v", relPath, err)
+					if indexErr != nil {
+						log.Printf("Warning: could not cache index for %s: %v", entry.relPath, indexErr)
 					}
 				}
 			}
 
-			folder := filepath.Dir(relPath)
+			folder := filepath.Dir(entry.relPath)
 			if folder == "." {
 				folder = ""
 			}
 
-			results = append(results, McapFileIndex{
-				Path:      relPath,
+			enc.Encode(map[string]interface{}{"file": McapFileIndex{
+				Path:      entry.relPath,
 				Folder:    folder,
-				Filename:  d.Name(),
+				Filename:  entry.info.Name(),
 				StartTime: float64(startNs) / 1e9,
 				EndTime:   float64(endNs) / 1e9,
-				Size:      info.Size(),
-			})
-			return nil
-		})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+				Size:      entry.info.Size(),
+			}})
+			flusher.Flush()
 		}
 
-		// Delete stale entries for files that no longer exist
+		// Phase 3: cleanup stale cache entries
 		if indexDB == nil {
 			// no cache — skip cleanup
 		} else if rows, err := indexDB.Query(`SELECT path FROM mcap_index`); err == nil {
@@ -468,13 +485,8 @@ func main() {
 			}
 		}
 
-		if results == nil {
-			results = []McapFileIndex{}
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(results)
+		enc.Encode(map[string]bool{"done": true})
+		flusher.Flush()
 	})
 
 	} // end if absPath != ""

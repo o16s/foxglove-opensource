@@ -9,6 +9,8 @@ import { makeStyles } from "tss-react/mui";
 
 import TextMiddleTruncate from "@foxglove/studio-base/components/TextMiddleTruncate";
 import { usePlayerSelection } from "@foxglove/studio-base/context/PlayerSelectionContext";
+import { getCurrentFiles } from "@foxglove/studio-base/dataSources/McapServerDataSourceFactory";
+import { exportFilesAsZip } from "@foxglove/studio-base/util/exportZip";
 import {
   WorkspaceContextStore,
   useWorkspaceStore,
@@ -64,6 +66,8 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
 
   // FILE
 
+  const hasOpenFiles = open && getCurrentFiles() != undefined;
+
   const fileItems = useMemo(() => {
     const items: AppBarMenuItem[] = [
       {
@@ -94,6 +98,20 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
         },
       },
       { type: "divider" },
+      {
+        type: "item",
+        label: t("exportRecordings", { defaultValue: "Export recordings as ZIP" }),
+        key: "export-zip",
+        disabled: !hasOpenFiles,
+        onClick: () => {
+          const files = getCurrentFiles();
+          if (files) {
+            void exportFilesAsZip(files);
+          }
+          handleNestedMenuClose();
+        },
+      },
+      { type: "divider" },
       { type: "item", label: t("recentDataSources"), key: "recent-sources", disabled: true },
     ];
 
@@ -115,6 +133,7 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
     dialogActions.dataSource,
     dialogActions.openFile,
     handleNestedMenuClose,
+    hasOpenFiles,
     recentSources,
     selectRecent,
     t,

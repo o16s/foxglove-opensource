@@ -12,6 +12,13 @@ import {
 } from "@foxglove/studio-base/players/types";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 
+export type SourceRange = {
+  name: string;
+  folder?: string;
+  start: Time;
+  end: Time;
+};
+
 export type Initalization = {
   start: Time;
   end: Time;
@@ -25,6 +32,9 @@ export type Initalization = {
   publishersByTopic: Map<string, Set<string>>;
 
   problems: PlayerProblem[];
+
+  /** Per-source time ranges when multiple files are loaded */
+  sourceRanges?: SourceRange[];
 };
 
 export type MessageIteratorArgs = {
