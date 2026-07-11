@@ -40,6 +40,7 @@ import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
 import isDesktopApp from "@foxglove/studio-base/util/isDesktopApp";
 
 import {
+  AgentSettings,
   AutoUpdate,
   ColorSchemeSettings,
   LanguageSettings,
@@ -263,6 +264,7 @@ export function AppSettingsDialog(
               {supportsAppUpdates && <AutoUpdate />}
               {!isDesktopApp() && <LaunchDefault />}
               {isDesktopApp() && <RosPackagePath />}
+              <AgentSettings />
               <Stack>
                 <FormLabel>{t("advanced")}:</FormLabel>
                 <FormControlLabel

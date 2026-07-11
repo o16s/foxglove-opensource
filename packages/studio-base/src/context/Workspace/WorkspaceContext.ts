@@ -14,6 +14,7 @@ export const LeftSidebarItemKeys = ["panel-settings", "topics", "problems"] as c
 export type LeftSidebarItemKey = (typeof LeftSidebarItemKeys)[number];
 
 export const RightSidebarItemKeys = [
+  "agent",
   "events",
   "variables",
   "studio-logs-settings",

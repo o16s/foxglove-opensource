@@ -394,3 +394,42 @@ export function LanguageSettings(): React.ReactElement {
     </Stack>
   );
 }
+
+export function AgentSettings(): JSX.Element {
+  const [apiEndpoint = "", setApiEndpoint] = useAppConfigurationValue<string>(
+    AppSetting.AGENT_API_ENDPOINT,
+  );
+  const [apiKey = "", setApiKey] = useAppConfigurationValue<string>(AppSetting.AGENT_API_KEY);
+  const [model = "", setModel] = useAppConfigurationValue<string>(AppSetting.AGENT_MODEL);
+
+  return (
+    <Stack gap={1.5}>
+      <FormLabel>AI Agent:</FormLabel>
+      <TextField
+        size="small"
+        label="API Endpoint"
+        placeholder="https://api.openai.com/v1"
+        value={apiEndpoint}
+        onChange={(e) => void setApiEndpoint(e.target.value)}
+        fullWidth
+      />
+      <TextField
+        size="small"
+        label="API Key"
+        type="password"
+        placeholder="sk-..."
+        value={apiKey}
+        onChange={(e) => void setApiKey(e.target.value)}
+        fullWidth
+      />
+      <TextField
+        size="small"
+        label="Model"
+        placeholder="gpt-4o"
+        value={model}
+        onChange={(e) => void setModel(e.target.value)}
+        fullWidth
+      />
+    </Stack>
+  );
+}

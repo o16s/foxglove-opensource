@@ -25,6 +25,7 @@ import {
   DataSourceDialogItem,
 } from "@foxglove/studio-base/components/DataSourceDialog";
 import DocumentDropListener from "@foxglove/studio-base/components/DocumentDropListener";
+import AgentChat from "@foxglove/studio-base/components/AgentChat";
 import { EventsList } from "@foxglove/studio-base/components/EventsList";
 import KeyListener from "@foxglove/studio-base/components/KeyListener";
 import {
@@ -310,6 +311,7 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
 
   const rightSidebarItems = useMemo(() => {
     const items = new Map<RightSidebarItemKey, SidebarItem>([
+      ["agent", { title: "Agent", component: AgentChat }],
       ["variables", { title: t("variables"), component: VariablesList }],
     ]);
     if (enableDebugMode) {

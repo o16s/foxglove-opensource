@@ -23,6 +23,11 @@ export enum AppSetting {
   SHOW_OPEN_DIALOG_ON_STARTUP = "ui.open-dialog-startup",
   ENABLE_UNIFIED_NAVIGATION = "ui.new-app-menu",
 
+  // Agent / AI assistant
+  AGENT_API_ENDPOINT = "agent.apiEndpoint",
+  AGENT_API_KEY = "agent.apiKey",
+  AGENT_MODEL = "agent.model",
+
   // Dev only
   ENABLE_LAYOUT_DEBUGGING = "enableLayoutDebugging",
 }

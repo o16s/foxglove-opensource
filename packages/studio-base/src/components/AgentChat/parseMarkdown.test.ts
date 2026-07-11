@@ -1,0 +1,39 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
+
+import { parseMarkdown } from "./parseMarkdown";
+
+describe("parseMarkdown", () => {
+  it("converts **bold** to <strong>", () => {
+    expect(parseMarkdown("hello **world**")).toBe("hello <strong>world</strong>");
+  });
+
+  it("converts *italic* to <em>", () => {
+    expect(parseMarkdown("hello *world*")).toBe("hello <em>world</em>");
+  });
+
+  it("converts `code` to <code>", () => {
+    expect(parseMarkdown("use `list_topics`")).toBe("use <code>list_topics</code>");
+  });
+
+  it("converts ```code blocks``` to <pre><code>", () => {
+    expect(parseMarkdown("```\nfoo\nbar\n```")).toBe("<pre><code>foo\nbar</code></pre>");
+  });
+
+  it("converts newlines to <br>", () => {
+    expect(parseMarkdown("line1\nline2")).toBe("line1<br>line2");
+  });
+
+  it("handles mixed formatting", () => {
+    const input = "I found **2 topics**: `sick1/image` and `plc/virtmaster`";
+    const result = parseMarkdown(input);
+    expect(result).toContain("<strong>2 topics</strong>");
+    expect(result).toContain("<code>sick1/image</code>");
+  });
+
+  it("escapes HTML entities to prevent XSS", () => {
+    expect(parseMarkdown("<script>alert(1)</script>")).not.toContain("<script>");
+    expect(parseMarkdown("<script>alert(1)</script>")).toContain("&lt;script&gt;");
+  });
+});
