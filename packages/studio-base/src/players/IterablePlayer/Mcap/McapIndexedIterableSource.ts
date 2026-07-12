@@ -41,6 +41,7 @@ export class McapIndexedIterableSource implements IIterableSource {
   >();
   #start?: Time;
   #end?: Time;
+  #rawTopicByNormalized = new Map<string, string>();
   #messageSizeEstimateByHash: Record<string /* subscription hash */, number> = {};
 
   public constructor(reader: McapIndexedReader) {
@@ -93,6 +94,7 @@ export class McapIndexedIterableSource implements IIterableSource {
         schemaName: schema?.name,
         topicName,
       });
+      this.#rawTopicByNormalized.set(topicName, channel.topic);
 
       let topic = topicsByName.get(topicName);
       if (!topic) {
@@ -160,12 +162,13 @@ export class McapIndexedIterableSource implements IIterableSource {
       ]),
     );
 
-    const topicNames = Array.from(topics.keys());
+    // Translate normalized topic names back to raw MCAP channel names for the reader
+    const rawTopicNames = Array.from(topics.keys(), (t) => this.#rawTopicByNormalized.get(t) ?? t);
 
     for await (const message of this.#reader.readMessages({
       startTime: toNanoSec(start),
       endTime: toNanoSec(end),
-      topics: topicNames,
+      topics: rawTopicNames,
       validateCrcs: false,
     })) {
       const channelInfo = this.#channelInfoById.get(message.channelId);
@@ -223,12 +226,13 @@ export class McapIndexedIterableSource implements IIterableSource {
 
     const messages: MessageEvent[] = [];
     for (const topic of topics.keys()) {
+      const rawTopic = this.#rawTopicByNormalized.get(topic) ?? topic;
       // NOTE: An iterator is made for each topic to get the latest message on that topic.
       // An single iterator for all the topics could result in iterating through many
       // irrelevant messages to get to an older message on a topic.
       for await (const message of this.#reader.readMessages({
         endTime: toNanoSec(time),
-        topics: [topic],
+        topics: [rawTopic],
         reverse: true,
         validateCrcs: false,
       })) {
