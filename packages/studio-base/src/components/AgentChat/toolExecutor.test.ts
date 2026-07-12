@@ -99,7 +99,7 @@ describe("createToolExecutor", () => {
     expect(result).toContain("Plot!");
   });
 
-  it("set_layout calls changePanelLayout and savePanelConfigs", async () => {
+  it("set_layout generates unique panel IDs and remaps layout and configs", async () => {
     const changePanelLayout = jest.fn();
     const savePanelConfigs = jest.fn();
     const ctx = makeContext({ changePanelLayout, savePanelConfigs });
@@ -113,14 +113,65 @@ describe("createToolExecutor", () => {
 
     const result = await execute("set_layout", { layout, configs });
 
-    expect(changePanelLayout).toHaveBeenCalledWith({ layout });
-    expect(savePanelConfigs).toHaveBeenCalledWith({
-      configs: [
-        { id: "Image!x1", config: { topic: "/camera/image" }, override: true },
-        { id: "Plot!x2", config: { paths: [] }, override: true },
-      ],
-    });
+    // Layout should have new unique IDs (not the LLM-provided ones)
+    const appliedLayout = changePanelLayout.mock.calls[0][0].layout;
+    expect(appliedLayout.first).toMatch(/^Image!/);
+    expect(appliedLayout.second).toMatch(/^Plot!/);
+    expect(appliedLayout.first).not.toBe("Image!x1");
+    expect(appliedLayout.second).not.toBe("Plot!x2");
+
+    // Configs should use the new IDs
+    const appliedConfigs = savePanelConfigs.mock.calls[0][0].configs;
+    expect(appliedConfigs).toHaveLength(2);
+    expect(appliedConfigs[0].id).toBe(appliedLayout.first);
+    expect(appliedConfigs[0].config).toEqual({ topic: "/camera/image" });
+    expect(appliedConfigs[1].id).toBe(appliedLayout.second);
+    expect(appliedConfigs[1].config).toEqual({ paths: [] });
     expect(result).toBe("Layout updated");
+  });
+
+  it("set_layout assigns unique IDs to duplicate panel types", async () => {
+    const changePanelLayout = jest.fn();
+    const savePanelConfigs = jest.fn();
+    const ctx = makeContext({ changePanelLayout, savePanelConfigs });
+    const execute = createToolExecutor(ctx);
+
+    // 4 Image panels in a 2x2 grid — LLM uses distinct placeholder IDs
+    const layout = {
+      direction: "column",
+      first: { direction: "row", first: "Image!a", second: "Image!b" },
+      second: { direction: "row", first: "Image!c", second: "Image!d" },
+    };
+    const configs = {
+      "Image!a": { imageTopic: "/cam1" },
+      "Image!b": { imageTopic: "/cam2" },
+      "Image!c": { imageTopic: "/cam3" },
+      "Image!d": { imageTopic: "/cam4" },
+    };
+
+    await execute("set_layout", { layout, configs });
+
+    const appliedLayout = changePanelLayout.mock.calls[0][0].layout;
+    const allIds = [
+      appliedLayout.first.first,
+      appliedLayout.first.second,
+      appliedLayout.second.first,
+      appliedLayout.second.second,
+    ];
+
+    // All IDs should be unique
+    expect(new Set(allIds).size).toBe(4);
+    // All should be Image panel type
+    allIds.forEach((id: string) => expect(id).toMatch(/^Image!/));
+
+    // Each config should map to the correct topic
+    const appliedConfigs = savePanelConfigs.mock.calls[0][0].configs;
+    expect(appliedConfigs).toHaveLength(4);
+    const configMap = new Map(appliedConfigs.map((c: { id: string; config: Record<string, unknown> }) => [c.id, c.config]));
+    expect(configMap.get(allIds[0])).toEqual({ imageTopic: "/cam1" });
+    expect(configMap.get(allIds[1])).toEqual({ imageTopic: "/cam2" });
+    expect(configMap.get(allIds[2])).toEqual({ imageTopic: "/cam3" });
+    expect(configMap.get(allIds[3])).toEqual({ imageTopic: "/cam4" });
   });
 
   it("get_topic_fields returns field paths for a topic", async () => {

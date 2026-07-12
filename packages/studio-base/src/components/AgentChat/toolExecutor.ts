@@ -177,10 +177,35 @@ export function createToolExecutor(
     set_layout: async (args) => {
       const layout = args.layout as MosaicNode<string>;
       const configs = (args.configs as Record<string, Record<string, unknown>>) ?? {};
-      ctx.changePanelLayout({ layout });
+
+      // Build a mapping from LLM-generated IDs to real unique panel IDs.
+      // This prevents collisions when the LLM reuses IDs or when IDs
+      // conflict with existing panels.
+      const idMap = new Map<string, string>();
+      for (const llmId of Object.keys(configs)) {
+        const panelType = llmId.split("!")[0] ?? llmId;
+        idMap.set(llmId, getPanelIdForType(panelType));
+      }
+
+      // Recursively remap panel IDs in the mosaic tree
+      function remapLayout(node: MosaicNode<string>): MosaicNode<string> {
+        if (typeof node === "string") {
+          return idMap.get(node) ?? node;
+        }
+        const branch = node as { direction: string; first: MosaicNode<string>; second: MosaicNode<string>; splitPercentage?: number };
+        return {
+          direction: branch.direction,
+          first: remapLayout(branch.first),
+          second: remapLayout(branch.second),
+          ...(branch.splitPercentage != undefined ? { splitPercentage: branch.splitPercentage } : {}),
+        } as MosaicNode<string>;
+      }
+
+      const remappedLayout = remapLayout(layout);
+      ctx.changePanelLayout({ layout: remappedLayout });
       ctx.savePanelConfigs({
-        configs: Object.entries(configs).map(([id, config]) => ({
-          id,
+        configs: Object.entries(configs).map(([llmId, config]) => ({
+          id: idMap.get(llmId) ?? llmId,
           config,
           override: true,
         })),

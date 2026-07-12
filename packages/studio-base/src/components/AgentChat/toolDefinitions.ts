@@ -111,12 +111,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         properties: {
           layout: {
             description:
-              "Mosaic layout tree. A leaf is a panel ID string (e.g. 'Image!abc'). A branch is { direction: 'row'|'column', first: node, second: node, splitPercentage?: number }.",
+              "Mosaic layout tree. A leaf is a panel ID string like 'Type!key' (e.g. 'Image!a', 'Plot!b'). A branch is { direction: 'row'|'column', first: node, second: node, splitPercentage?: number }. IMPORTANT: Each leaf ID must be unique — even for panels of the same type use different keys (e.g. 'Image!a', 'Image!b', 'Image!c'). IDs are remapped internally so any key works.",
           },
           configs: {
             type: "object",
             description:
-              "Map of panel ID to panel config. Each panel ID in the layout tree must have a config entry.",
+              "Map of panel ID to panel config. Each panel ID in the layout tree must have a matching config entry here.",
           },
         },
         required: ["layout", "configs"],
