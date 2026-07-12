@@ -202,7 +202,7 @@ export function createToolExecutor(
       }
 
       const remappedLayout = remapLayout(layout);
-      ctx.changePanelLayout({ layout: remappedLayout });
+      // Save configs BEFORE changing layout so panels have their config when they mount
       ctx.savePanelConfigs({
         configs: Object.entries(configs).map(([llmId, config]) => ({
           id: idMap.get(llmId) ?? llmId,
@@ -210,6 +210,7 @@ export function createToolExecutor(
           override: true,
         })),
       });
+      ctx.changePanelLayout({ layout: remappedLayout });
       return "Layout updated";
     },
 
