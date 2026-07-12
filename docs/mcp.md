@@ -98,7 +98,7 @@ JSON Schema definitions sent in the `tools` array of the API request. These tell
 
 ### 4. Tool Executor (`toolExecutor.ts`)
 
-Maps tool names to handler functions. Created via `createToolExecutor(ctx)` where `ctx` is a `StudioContext` containing React hook values (topics, datatypes, layout actions).
+Maps tool names to handler functions. Created via `createToolExecutor(ctx, fetchFn?)` where `ctx` is a `StudioContext` containing React hook values (topics, datatypes, layout actions).
 
 ```typescript
 type StudioContext = {
@@ -112,6 +112,8 @@ type StudioContext = {
   seekPlayback: ((time: Time) => void) | undefined;  // from MessagePipeline
   selectSource: (sourceId, args?) => void;            // from PlayerSelectionContext
   getBlockMessages: (topic: string) => MessageEvent[];  // reads block loader cache
+  incidents: Incident[];                  // from URL ?incidents= parameter
+  startTime: Time | undefined;            // recording start time, from playerState
 };
 ```
 
@@ -124,13 +126,15 @@ Builds the system message that instructs the LLM about:
 - Available panel types and their config formats
 - MessagePath syntax rules (topic name conventions, no spurious slash prepending)
 - Layout mosaic tree structure
+- Time convention (all times are elapsed seconds from recording start)
 - Visualization workflow (list topics → choose panels → create layout)
+- Incident-aware workflow (check incidents → correlate with data)
 - Data analysis workflow (read values → statistics → peaks → seek → annotate)
 - Recording search workflow (search → load → explore topics)
 
 ### 6. Markdown Parser (`parseMarkdown.ts`)
 
-Converts assistant response markdown to HTML for rendering. Handles bold, italic, inline code, code blocks, and newlines. HTML-escapes input first to prevent XSS.
+Converts assistant response markdown to HTML for rendering. Handles bold, italic, inline code, code blocks, tables, unordered lists, and newlines. HTML-escapes input first to prevent XSS. Tables render as styled `<table>` elements with borders; lists render as `<ul>/<li>`.
 
 ## Current Tools
 
@@ -160,13 +164,15 @@ Converts assistant response markdown to HTML for rendering. Handles bold, italic
 
 ### Data Analysis
 
+All times are **elapsed seconds** from the recording start — matching the Plot X-axis and progress bar.
+
 | Tool | Args | Returns | Description |
 |------|------|---------|-------------|
-| `read_field_values` | `{ topic, field, limit? }` | `[{time, value}]` | Read numeric values from loaded MCAP data (block loader cache). Downsampled to limit (default 5000) |
-| `get_statistics` | `{ topic, field }` | `{min, max, mean, stddev, count, startTime, endTime}` | Compute summary statistics for a numeric field |
+| `read_field_values` | `{ topic, field, limit? }` | `[{time, value}]` | Read numeric values from loaded MCAP data (block loader cache). Times are elapsed seconds. Downsampled to limit (default 5000) |
+| `get_statistics` | `{ topic, field }` | `{min, max, mean, stddev, count, startTime, endTime}` | Compute summary statistics for a numeric field. Times are elapsed seconds |
 | `find_peaks` | `{ topic, field, threshold?, stddev? }` | `[{time, value}]` | Find local maxima above threshold or mean + N*stddev. Max 50 results, sorted by value descending |
-| `seek_to_time` | `{ time }` | Status | Jump playback to a specific timestamp (seconds) |
-| `annotate_plot` | `{ panelId, annotations }` | Status | Add shaded time-range annotation regions to a Plot panel config |
+| `seek_to_time` | `{ time }` | Status | Jump playback to a specific elapsed time (seconds from recording start) |
+| `annotate_plot` | `{ panelId, annotations }` | Status | Add shaded time-range annotation regions to a Plot panel. Annotations render as colored boxes via chartjs-plugin-annotation |
 
 ### Recording Browser (MCAP server only)
 
@@ -184,6 +190,17 @@ Tools don't call React hooks directly. Instead, the `AgentChat` component:
 4. The returned executor function is passed to `runAgentLoop()`
 
 This keeps the tool logic pure and testable — tests create a mock `StudioContext` with `jest.fn()` callbacks.
+
+## Time Convention
+
+All data analysis tools use **elapsed seconds from the recording start**, not raw unix timestamps. This matches what the user sees on the Plot X-axis and the progress bar.
+
+- `startTime` is read from `playerState.activeData?.startTime` and stored in `StudioContext`
+- `extractFieldValues()` subtracts `startTime` from each message's `receiveTime` to produce elapsed seconds
+- `seek_to_time` adds `startTime` back when calling `seekPlayback()`
+- `annotate_plot` annotations use elapsed seconds for `startTime`/`endTime`, matching the Plot X-axis
+
+The system prompt instructs the LLM to present times as "at 12.5s" or "between 100s and 200s", never raw unix timestamps.
 
 ## Topic Name Convention
 
@@ -215,7 +232,40 @@ Recording tools (`search_recordings`, `load_recordings`) require the Go server w
 
 ### Plot Annotations
 
-The `annotate_plot` tool adds annotation regions to a Plot panel's config. Each annotation has `startTime`, `endTime`, `label`, and optional `color`. The `PlotAnnotation` type is defined in `packages/studio-base/src/panels/Plot/config.ts`. Rendering of annotations as visual overlays on the chart is a separate task.
+The `annotate_plot` tool adds annotation regions to a Plot panel's config. Each annotation has `startTime`, `endTime`, `label`, optional `color`, and optional `enabled` flag.
+
+**Rendering**: Annotations are piped through `PlotCoordinator.handleConfig()` → `ChartRenderer.update()` as `boxAnnotations`, rendered via `chartjs-plugin-annotation` as semi-transparent colored boxes with labels.
+
+**Settings UI**: The Plot panel settings sidebar has an "Annotations" section (under Series) where users can:
+- Add new annotations
+- Delete existing annotations
+- Toggle annotation visibility (eye icon)
+- Edit label, start/end time (elapsed seconds), and color
+
+**Type**: `PlotAnnotation` is defined in `packages/studio-base/src/panels/Plot/config.ts`:
+```typescript
+type PlotAnnotation = {
+  startTime: number;   // elapsed seconds from recording start
+  endTime: number;
+  label: string;
+  color?: string;      // hex color, defaults to #FF9800 (orange)
+  enabled?: boolean;   // defaults to true
+};
+```
+
+### Incident Context
+
+Incidents are parsed from the `?incidents=` URL parameter (base64 or plain JSON) in `AgentChat/index.tsx`. The `get_incidents` tool exposes them to the agent so it can correlate alerts with recording data.
+
+### Chat Markdown Rendering
+
+The `parseMarkdown` function supports:
+- **Bold** (`**text**`), **italic** (`*text*`), **inline code** (`` `code` ``), **code blocks** (` ``` `)
+- **Tables** — pipe-delimited markdown tables → `<table>` with styled borders
+- **Unordered lists** — `- item` or `* item` → `<ul>/<li>`
+- **Newlines** → `<br>` (except inside `<pre>` blocks)
+
+All input is HTML-escaped first to prevent XSS.
 
 ## Adding a New Tool
 
@@ -237,11 +287,11 @@ packages/studio-base/src/components/AgentChat/
 ├── toolDefinitions.ts    # JSON schemas for 16 tools sent to LLM
 ├── toolDefinitions.test.ts
 ├── toolExecutor.ts       # Tool name → handler mapping + StudioContext
-├── toolExecutor.test.ts  # 30 tests (all tools + error/edge cases)
+├── toolExecutor.test.ts  # 31 tests (all tools + error/edge cases)
 ├── systemPrompt.ts       # System message builder
 ├── systemPrompt.test.ts
-├── parseMarkdown.ts      # MD → HTML (XSS-safe)
-├── parseMarkdown.test.ts # 7 tests
+├── parseMarkdown.ts      # MD → HTML (tables, lists, bold, italic, code; XSS-safe)
+├── parseMarkdown.test.ts # 10 tests
 ├── index.tsx             # React UI (chat bubbles, input, settings check)
 └── agent-avatar.svg      # Avatar icon
 ```
