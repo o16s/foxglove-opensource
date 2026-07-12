@@ -10,6 +10,7 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import { LinearProgress, Typography } from "@mui/material";
 import { useSnackbar } from "notistack";
 import { extname } from "path";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -132,6 +133,9 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
   const playerPresence = useMessagePipeline(selectPlayerPresence);
   const playerProblems = useMessagePipeline(selectPlayerProblems);
   const embedMode = useIsEmbedMode();
+  const [fileDownloadState, setFileDownloadState] = useState<
+    { filename: string; loaded: number; total: number } | undefined
+  >();
 
   const dataSourceDialog = useWorkspaceStore(selectWorkspaceDataSourceDialog);
   const leftSidebarItem = useWorkspaceStore(selectWorkspaceLeftSidebarItem);
@@ -610,16 +614,37 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
           return;
         }
 
-        // Download the file
+        // Download the file with progress tracking
+        const fileName = matchedPath.includes("/")
+          ? matchedPath.slice(matchedPath.lastIndexOf("/") + 1)
+          : matchedPath;
         const fileUrl = `${apiBase}/api/mcap/files/${encodeURIComponent(matchedPath)}`;
         const fileRes = await fetch(fileUrl, { signal: abortController.signal });
         if (!fileRes.ok) {
           throw new Error(`File download failed: HTTP ${fileRes.status}`);
         }
-        const blob = await fileRes.blob();
-        const fileName = matchedPath.includes("/")
-          ? matchedPath.slice(matchedPath.lastIndexOf("/") + 1)
-          : matchedPath;
+
+        const contentLength = parseInt(fileRes.headers.get("Content-Length") ?? "0", 10);
+        const fileReader = fileRes.body?.getReader();
+        if (!fileReader) {
+          throw new Error("No response body for file download");
+        }
+
+        setFileDownloadState({ filename: fileName, loaded: 0, total: contentLength });
+        const chunks: Uint8Array[] = [];
+        let loaded = 0;
+        for (;;) {
+          const { done: readDone, value: chunk } = await fileReader.read();
+          if (readDone) {
+            break;
+          }
+          chunks.push(chunk);
+          loaded += chunk.byteLength;
+          setFileDownloadState({ filename: fileName, loaded, total: contentLength });
+        }
+        setFileDownloadState(undefined);
+
+        const blob = new Blob(chunks);
         const file = new File([blob], fileName);
 
         const downloadId = `file-${Date.now()}`;
@@ -629,6 +654,7 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
           params: { downloadId },
         });
       } catch (err) {
+        setFileDownloadState(undefined);
         if (err instanceof Error && err.name === "AbortError") {
           return;
         }
@@ -678,6 +704,39 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
       <SyncAdapters />
       <KeyListener global keyDownHandlers={keyDownHandlers} />
       <div className={classes.container} ref={containerRef} tabIndex={0}>
+        {fileDownloadState && (
+          <Stack
+            alignItems="center"
+            justifyContent="center"
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 10000,
+              backgroundColor: "rgba(0,0,0,0.7)",
+            }}
+          >
+            <Stack alignItems="center" gap={1} style={{ width: 320 }}>
+              <Typography variant="subtitle1" color="white">
+                Downloading {fileDownloadState.filename}
+              </Typography>
+              {fileDownloadState.total > 0 ? (
+                <>
+                  <LinearProgress
+                    variant="determinate"
+                    value={(fileDownloadState.loaded / fileDownloadState.total) * 100}
+                    style={{ width: "100%" }}
+                  />
+                  <Typography variant="caption" color="grey.400">
+                    {(fileDownloadState.loaded / 1024 / 1024).toFixed(1)} /{" "}
+                    {(fileDownloadState.total / 1024 / 1024).toFixed(1)} MB
+                  </Typography>
+                </>
+              ) : (
+                <LinearProgress variant="indeterminate" style={{ width: "100%" }} />
+              )}
+            </Stack>
+          </Stack>
+        )}
         {!embedMode && appBar}
         {embedMode ? (
           <RemountOnValueChange value={playerId}>
