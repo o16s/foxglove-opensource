@@ -158,5 +158,5 @@ export function useTopicListSearch(params: UseTopicListSearchParams): UseTopicLi
     return results;
   }, [filteredTopics, messagePathResults]);
 
-  return { items: treeItems, fieldsByTopic };
+  return useMemo(() => ({ items: treeItems, fieldsByTopic }), [treeItems, fieldsByTopic]);
 }

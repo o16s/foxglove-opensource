@@ -175,9 +175,9 @@ export function TopicList(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    // Discard cached row heights when the filter results or expansion state changes
+    // Discard cached row heights when the item list changes (filter or expansion)
     listRef.current?.resetAfterIndex(0);
-  }, [treeItems, expandedTopics]);
+  }, [treeItems]);
 
   const itemData = useMemo(
     () => ({ treeItems, selectedIndexes, expandedTopics, searchResult, debouncedFilterText, toggleExpand }),
