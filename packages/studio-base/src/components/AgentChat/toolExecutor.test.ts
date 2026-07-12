@@ -742,6 +742,20 @@ describe("createToolExecutor", () => {
     expect(result).toContain("annotation");
   });
 
+  it("annotate_plot returns error when annotations is not an array", async () => {
+    const savePanelConfigs = jest.fn();
+    const ctx = makeContext({ savePanelConfigs });
+    const execute = createToolExecutor(ctx);
+
+    const result = await execute("annotate_plot", {
+      panelId: "Plot!abc",
+      annotations: "not an array",
+    });
+
+    expect(savePanelConfigs).not.toHaveBeenCalled();
+    expect(result).toContain("must be an array");
+  });
+
   // --- get_panel_config ---
 
   it("get_panel_config returns config for a panel", async () => {

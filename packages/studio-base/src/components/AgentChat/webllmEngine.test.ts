@@ -91,6 +91,42 @@ describe("WebLLM engine singleton", () => {
     expect(webllm.CreateMLCEngine).toHaveBeenCalledTimes(1);
   });
 
+  it("unload during loading prevents engine from being set", async () => {
+    const webllm = jest.requireMock("@mlc-ai/web-llm");
+
+    // Make CreateMLCEngine return a promise we control
+    let resolveEngine!: (engine: unknown) => void;
+    const enginePromise = new Promise((resolve) => { resolveEngine = resolve; });
+    webllm.CreateMLCEngine.mockImplementationOnce(() => enginePromise);
+
+    const loadPromise = initWebLLMEngine("slow-model");
+
+    // Wait a tick so the async function reaches the await
+    await Promise.resolve();
+
+    // Unload while loading is in-flight
+    unloadWebLLMEngine();
+    expect(getWebLLMStatus()).toEqual({ state: "idle" });
+
+    // Now resolve the engine creation
+    const mockEngine = {
+      chat: { completions: { create: jest.fn() } },
+      unload: jest.fn(),
+    };
+    resolveEngine(mockEngine);
+
+    // The load should complete but NOT install the engine as singleton
+    const engine = await loadPromise;
+    expect(engine).toBeDefined();
+    // The stale engine should have been unloaded
+    expect(mockEngine.unload).toHaveBeenCalled();
+
+    // Re-requesting the same model should create a new one (not reuse)
+    webllm.CreateMLCEngine.mockClear();
+    await initWebLLMEngine("slow-model");
+    expect(webllm.CreateMLCEngine).toHaveBeenCalledTimes(1);
+  });
+
   it("unloadWebLLMEngine releases GPU memory and resets to idle", async () => {
     const engine = await initWebLLMEngine("model-to-unload");
     expect(getWebLLMStatus()).toEqual({ state: "ready" });

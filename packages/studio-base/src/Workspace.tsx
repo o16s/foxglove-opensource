@@ -478,16 +478,37 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
       return;
     }
 
+    // Validate URL protocol to prevent SSRF (file://, data://, etc.)
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(layoutUrl, window.location.origin);
+    } catch {
+      enqueueSnackbar("Invalid layout URL", { variant: "error" });
+      return;
+    }
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      enqueueSnackbar("Layout URL must use http or https", { variant: "error" });
+      return;
+    }
+
+    const MAX_LAYOUT_SIZE = 1_000_000; // 1 MB
     const abortController = new AbortController();
 
     (async () => {
       try {
-        log.debug(`Fetching layout from URL: ${layoutUrl}`);
-        const res = await fetch(layoutUrl, { signal: abortController.signal });
+        log.debug("Fetching layout from URL");
+        const res = await fetch(parsedUrl.href, { signal: abortController.signal });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
+        const contentLength = res.headers.get("content-length");
+        if (contentLength && parseInt(contentLength, 10) > MAX_LAYOUT_SIZE) {
+          throw new Error("Layout response too large");
+        }
         const text = await res.text();
+        if (text.length > MAX_LAYOUT_SIZE) {
+          throw new Error("Layout response too large");
+        }
         const layoutData = parseLayoutParam(text);
         if (layoutData) {
           setCurrentLayout({ data: layoutData });
@@ -499,7 +520,7 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
           return;
         }
         log.error(`Failed to load layout from URL: ${err}`);
-        enqueueSnackbar(`Failed to load layout from URL: ${layoutUrl}`, { variant: "error" });
+        enqueueSnackbar("Failed to load layout from URL", { variant: "error" });
       }
     })();
 

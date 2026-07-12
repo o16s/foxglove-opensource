@@ -144,4 +144,51 @@ describe("runAgentLoop", () => {
     expect(provider).toHaveBeenCalledTimes(10);
     expect(result.messages).toHaveLength(21);
   });
+
+  it("handles malformed tool call JSON gracefully", async () => {
+    const provider = mockProvider([
+      {
+        choices: [{
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              { id: "call_bad", function: { name: "list_topics", arguments: "not valid json{{{" } },
+            ],
+          },
+          finish_reason: "tool_calls",
+        }],
+      },
+    ]);
+
+    const result = await runAgentLoop({
+      messages: [{ role: "user", content: "test" }],
+      tools: [],
+      completionProvider: provider,
+      executeTool: jest.fn(),
+    });
+
+    // Should not throw — the tool result should contain the parse error
+    const toolMsg = result.messages.find((m) => m.role === "tool");
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.content).toContain("Error");
+  });
+
+  it("handles empty choices array gracefully", async () => {
+    const provider = mockProvider([
+      { choices: [] },
+    ]);
+
+    const result = await runAgentLoop({
+      messages: [{ role: "user", content: "test" }],
+      tools: [],
+      completionProvider: provider,
+      executeTool: jest.fn(),
+    });
+
+    // Should terminate without crashing
+    expect(result.messages.length).toBeGreaterThanOrEqual(2);
+    const lastMsg = result.messages[result.messages.length - 1]!;
+    expect(lastMsg.role).toBe("assistant");
+  });
 });

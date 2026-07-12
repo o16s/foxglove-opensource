@@ -23,6 +23,9 @@ let loadingPromise: Promise<EngineWithUnload> | undefined;
 let loadingModelId: string | undefined;
 let loadingContextSize: number | undefined;
 
+// Monotonically increasing generation counter to detect stale loads
+let initGeneration = 0;
+
 function setStatus(status: WebLLMStatus) {
   currentStatus = status;
   for (const listener of listeners) {
@@ -65,14 +68,26 @@ export async function initWebLLMEngine(
 
   setStatus({ state: "loading" });
 
+  const generation = ++initGeneration;
+
   const promise = (async () => {
     const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
     const chatOpts = contextSize ? { context_window_size: contextSize } : undefined;
     const engine = (await CreateMLCEngine(modelId, {
       initProgressCallback: (progress: { text: string; progress: number }) => {
-        setStatus({ state: "loading", progress: progress.progress, text: progress.text });
+        // Only update status if this load is still the current one
+        if (initGeneration === generation) {
+          setStatus({ state: "loading", progress: progress.progress, text: progress.text });
+        }
       },
     }, chatOpts)) as EngineWithUnload;
+
+    // If unload was called (or a different model started) while we were loading,
+    // don't install this engine — it's stale.
+    if (initGeneration !== generation) {
+      engine.unload();
+      return engine;
+    }
 
     currentEngine = engine;
     currentModelId = modelId;
@@ -99,13 +114,15 @@ export async function initWebLLMEngine(
 
 /** Unload the engine to release GPU memory. */
 export function unloadWebLLMEngine(): void {
+  // Bump generation so any in-flight load won't install its engine
+  initGeneration++;
   if (currentEngine) {
     currentEngine.unload();
     currentEngine = undefined;
     currentModelId = undefined;
     currentContextSize = undefined;
-    setStatus({ state: "idle" });
   }
+  setStatus({ state: "idle" });
 }
 
 /** Reset singleton state — for testing only. */
@@ -117,5 +134,6 @@ export function resetWebLLMEngine(): void {
   loadingPromise = undefined;
   loadingModelId = undefined;
   loadingContextSize = undefined;
+  initGeneration = 0;
   listeners.clear();
 }

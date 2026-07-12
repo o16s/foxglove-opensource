@@ -149,49 +149,60 @@ export async function exportToWebM(
 
     recorder.start();
 
-    const frameDuration = 1000 / fps;
-    let framesEncoded = 0;
-    for (let i = 0; i < messages.length; i++) {
-      let bitmap: ImageBitmap;
-      try {
-        bitmap = await decodeFrame(messages[i]!, schemaName, videoDecoder);
-      } catch (err) {
-        if (err instanceof NoFrameError) {
-          // Skip non-decodable frames (SPS/PPS only, waiting for keyframe)
-          onProgress?.({ framesProcessed: i + 1, totalFrames: messages.length });
-          continue;
+    try {
+      const frameDuration = 1000 / fps;
+      let framesEncoded = 0;
+      for (let i = 0; i < messages.length; i++) {
+        let bitmap: ImageBitmap;
+        try {
+          bitmap = await decodeFrame(messages[i]!, schemaName, videoDecoder);
+        } catch (err) {
+          if (err instanceof NoFrameError) {
+            // Skip non-decodable frames (SPS/PPS only, waiting for keyframe)
+            onProgress?.({ framesProcessed: i + 1, totalFrames: messages.length });
+            continue;
+          }
+          throw err;
         }
-        throw err;
+
+        // Draw to offscreen canvas, then transfer to visible canvas
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        bitmap.close();
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        visibleCtx.putImageData(imageData, 0, 0);
+
+        // Request frame from the stream
+        const track = stream.getVideoTracks()[0];
+        if (track && "requestFrame" in track) {
+          (track as unknown as { requestFrame: () => void }).requestFrame();
+        }
+
+        // Wait the frame duration to maintain timing
+        await new Promise((resolve) => setTimeout(resolve, frameDuration));
+
+        framesEncoded++;
+        onProgress?.({ framesProcessed: i + 1, totalFrames: messages.length });
       }
 
-      // Draw to offscreen canvas, then transfer to visible canvas
-      ctx.drawImage(bitmap, 0, 0, width, height);
-      bitmap.close();
-
-      const imageData = ctx.getImageData(0, 0, width, height);
-      visibleCtx.putImageData(imageData, 0, 0);
-
-      // Request frame from the stream
-      const track = stream.getVideoTracks()[0];
-      if (track && "requestFrame" in track) {
-        (track as unknown as { requestFrame: () => void }).requestFrame();
+      if (framesEncoded === 0) {
+        throw new Error("No decodable video frames found");
       }
 
-      // Wait the frame duration to maintain timing
-      await new Promise((resolve) => setTimeout(resolve, frameDuration));
-
-      framesEncoded++;
-      onProgress?.({ framesProcessed: i + 1, totalFrames: messages.length });
-    }
-
-    if (framesEncoded === 0) {
       recorder.stop();
-      await done;
-      throw new Error("No decodable video frames found");
+      return await done;
+    } catch (err) {
+      // Ensure recorder is stopped on any error to prevent resource leaks
+      try {
+        recorder.stop();
+      } catch {
+        // Recorder may already be in an error state
+      }
+      for (const track of stream.getTracks()) {
+        track.stop();
+      }
+      throw err;
     }
-
-    recorder.stop();
-    return await done;
   } finally {
     videoDecoder?.close();
   }

@@ -428,12 +428,10 @@ export function createToolExecutor(
 
     annotate_plot: async (args): Promise<string> => {
       const panelId = args.panelId as string;
-      const annotations = args.annotations as Array<{
-        startTime: number;
-        endTime: number;
-        label: string;
-        color?: string;
-      }>;
+      const annotations = args.annotations;
+      if (!Array.isArray(annotations)) {
+        return "Error: annotations must be an array";
+      }
 
       ctx.savePanelConfigs({
         configs: [
