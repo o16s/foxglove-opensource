@@ -3,34 +3,43 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import { MessageEvent } from "@foxglove/studio";
+import {
+  H264Decoder,
+  NoFrameError,
+} from "@foxglove/studio-base/panels/ThreeDeeRender/renderables/Images/H264Decoder";
 
 export type TopicInfo = {
   name: string;
   schemaName: string | undefined;
 };
 
-/** All schema names that represent image topics (ROS1, ROS2, Foxglove). */
-export const IMAGE_TOPIC_SCHEMAS = [
+/** All schema names that represent exportable image/video topics (ROS1, ROS2, Foxglove). */
+export const EXPORTABLE_TOPIC_SCHEMAS = [
   // ROS 1
   "sensor_msgs/Image",
   "sensor_msgs/CompressedImage",
   // ROS 2
   "sensor_msgs/msg/Image",
   "sensor_msgs/msg/CompressedImage",
-  // Foxglove
+  // Foxglove images
   "foxglove.RawImage",
   "foxglove.CompressedImage",
   "foxglove_msgs/RawImage",
   "foxglove_msgs/msg/RawImage",
   "foxglove_msgs/CompressedImage",
   "foxglove_msgs/msg/CompressedImage",
+  // Foxglove compressed video (H.264)
+  "foxglove.CompressedVideo",
+  "foxglove_msgs/CompressedVideo",
+  "foxglove_msgs/msg/CompressedVideo",
+  "foxglove::CompressedVideo",
 ] as const;
 
-const IMAGE_SCHEMAS_SET = new Set<string>(IMAGE_TOPIC_SCHEMAS);
+const EXPORTABLE_SCHEMAS_SET = new Set<string>(EXPORTABLE_TOPIC_SCHEMAS);
 
-/** Filter topics to only those with image schemas. */
+/** Filter topics to only those with exportable image/video schemas. */
 export function getImageTopics(topics: TopicInfo[]): TopicInfo[] {
-  return topics.filter((t) => t.schemaName != undefined && IMAGE_SCHEMAS_SET.has(t.schemaName));
+  return topics.filter((t) => t.schemaName != undefined && EXPORTABLE_SCHEMAS_SET.has(t.schemaName));
 }
 
 export type ExportVideoProgress = {
@@ -52,8 +61,12 @@ type CompressedImageMessage = {
   data: Uint8Array;
 };
 
-function isCompressed(schemaName: string): boolean {
-  return schemaName.includes("Compressed");
+function isCompressedImage(schemaName: string): boolean {
+  return schemaName.includes("CompressedImage") || (schemaName.includes("Compressed") && !schemaName.includes("Video"));
+}
+
+function isCompressedVideo(schemaName: string): boolean {
+  return schemaName.includes("CompressedVideo");
 }
 
 /**
@@ -70,76 +83,118 @@ export async function exportToWebM(
     throw new Error("No image messages to export");
   }
 
-  // Decode first frame to determine dimensions
-  const firstFrame = await decodeFrame(messages[0]!, schemaName);
-  const width = firstFrame.width;
-  const height = firstFrame.height;
-  firstFrame.close();
+  // Create H264Decoder for compressed video topics
+  const videoDecoder = isCompressedVideo(schemaName) ? new H264Decoder() : undefined;
 
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("Could not create canvas 2d context");
-  }
-
-  // Calculate approximate framerate from message timestamps
-  const fps = estimateFps(messages);
-
-  // We need to transfer to a regular canvas for MediaRecorder
-  const visibleCanvas = document.createElement("canvas");
-  visibleCanvas.width = width;
-  visibleCanvas.height = height;
-  const visibleCtx = visibleCanvas.getContext("2d")!;
-
-  const stream = visibleCanvas.captureStream(0); // 0 = manual frame control
-  const recorder = new MediaRecorder(stream, {
-    mimeType: getSupportedMimeType(),
-    videoBitsPerSecond: 8_000_000,
-  });
-
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (e) => {
-    if (e.data.size > 0) {
-      chunks.push(e.data);
+  try {
+    // Decode first decodable frame to determine dimensions
+    let firstFrame: ImageBitmap | undefined;
+    let firstFrameIdx = 0;
+    for (; firstFrameIdx < messages.length; firstFrameIdx++) {
+      try {
+        firstFrame = await decodeFrame(messages[firstFrameIdx]!, schemaName, videoDecoder);
+        break;
+      } catch (err) {
+        // H.264 streams may start with parameter-only NAL units — skip them
+        if (err instanceof NoFrameError) {
+          continue;
+        }
+        throw err;
+      }
     }
-  };
-
-  const done = new Promise<Blob>((resolve, reject) => {
-    recorder.onstop = () => {
-      resolve(new Blob(chunks, { type: recorder.mimeType }));
-    };
-    recorder.onerror = (e) => {
-      reject(new Error(`MediaRecorder error: ${(e as ErrorEvent).message ?? "unknown"}`));
-    };
-  });
-
-  recorder.start();
-
-  const frameDuration = 1000 / fps;
-  for (let i = 0; i < messages.length; i++) {
-    const bitmap = await decodeFrame(messages[i]!, schemaName);
-
-    // Draw to offscreen canvas, then transfer to visible canvas
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-
-    const imageData = ctx.getImageData(0, 0, width, height);
-    visibleCtx.putImageData(imageData, 0, 0);
-
-    // Request frame from the stream
-    const track = stream.getVideoTracks()[0];
-    if (track && "requestFrame" in track) {
-      (track as unknown as { requestFrame: () => void }).requestFrame();
+    if (!firstFrame) {
+      throw new Error("No decodable frames found in messages");
     }
 
-    // Wait the frame duration to maintain timing
-    await new Promise((resolve) => setTimeout(resolve, frameDuration));
+    const width = firstFrame.width;
+    const height = firstFrame.height;
+    firstFrame.close();
 
-    onProgress?.({ framesProcessed: i + 1, totalFrames: messages.length });
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Could not create canvas 2d context");
+    }
+
+    // Calculate approximate framerate from message timestamps
+    const fps = estimateFps(messages);
+
+    // We need to transfer to a regular canvas for MediaRecorder
+    const visibleCanvas = document.createElement("canvas");
+    visibleCanvas.width = width;
+    visibleCanvas.height = height;
+    const visibleCtx = visibleCanvas.getContext("2d")!;
+
+    const stream = visibleCanvas.captureStream(0); // 0 = manual frame control
+    const recorder = new MediaRecorder(stream, {
+      mimeType: getSupportedMimeType(),
+      videoBitsPerSecond: 8_000_000,
+    });
+
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunks.push(e.data);
+      }
+    };
+
+    const done = new Promise<Blob>((resolve, reject) => {
+      recorder.onstop = () => {
+        resolve(new Blob(chunks, { type: recorder.mimeType }));
+      };
+      recorder.onerror = (e) => {
+        reject(new Error(`MediaRecorder error: ${(e as ErrorEvent).message ?? "unknown"}`));
+      };
+    });
+
+    recorder.start();
+
+    const frameDuration = 1000 / fps;
+    let framesEncoded = 0;
+    for (let i = 0; i < messages.length; i++) {
+      let bitmap: ImageBitmap;
+      try {
+        bitmap = await decodeFrame(messages[i]!, schemaName, videoDecoder);
+      } catch (err) {
+        if (err instanceof NoFrameError) {
+          // Skip non-decodable frames (SPS/PPS only, waiting for keyframe)
+          onProgress?.({ framesProcessed: i + 1, totalFrames: messages.length });
+          continue;
+        }
+        throw err;
+      }
+
+      // Draw to offscreen canvas, then transfer to visible canvas
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+
+      const imageData = ctx.getImageData(0, 0, width, height);
+      visibleCtx.putImageData(imageData, 0, 0);
+
+      // Request frame from the stream
+      const track = stream.getVideoTracks()[0];
+      if (track && "requestFrame" in track) {
+        (track as unknown as { requestFrame: () => void }).requestFrame();
+      }
+
+      // Wait the frame duration to maintain timing
+      await new Promise((resolve) => setTimeout(resolve, frameDuration));
+
+      framesEncoded++;
+      onProgress?.({ framesProcessed: i + 1, totalFrames: messages.length });
+    }
+
+    if (framesEncoded === 0) {
+      recorder.stop();
+      await done;
+      throw new Error("No decodable video frames found");
+    }
+
+    recorder.stop();
+    return await done;
+  } finally {
+    videoDecoder?.close();
   }
-
-  recorder.stop();
-  return await done;
 }
 
 function getSupportedMimeType(): string {
@@ -156,10 +211,31 @@ function getSupportedMimeType(): string {
   throw new Error("No supported video MIME type found. WebM encoding requires a modern browser.");
 }
 
-async function decodeFrame(msg: MessageEvent, schemaName: string): Promise<ImageBitmap> {
+type CompressedVideoMessage = {
+  timestamp: { sec: number; nsec: number };
+  format: string;
+  data: Uint8Array;
+};
+
+async function decodeFrame(
+  msg: MessageEvent,
+  schemaName: string,
+  videoDecoder?: H264Decoder,
+): Promise<ImageBitmap> {
   const message = msg.message as Record<string, unknown>;
 
-  if (isCompressed(schemaName)) {
+  if (isCompressedVideo(schemaName)) {
+    if (!videoDecoder) {
+      throw new Error("H264Decoder required for CompressedVideo");
+    }
+    const video = message as unknown as CompressedVideoMessage;
+    const data = video.data instanceof Uint8Array ? video.data : new Uint8Array(video.data as ArrayBuffer);
+    const timestampNanos =
+      BigInt(video.timestamp.sec) * 1_000_000_000n + BigInt(video.timestamp.nsec);
+    return await videoDecoder.decode(data, timestampNanos);
+  }
+
+  if (isCompressedImage(schemaName)) {
     const compressed = message as unknown as CompressedImageMessage;
     const blob = new Blob([compressed.data], {
       type: `image/${compressed.format}`,

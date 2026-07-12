@@ -2,16 +2,22 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { IMAGE_TOPIC_SCHEMAS, getImageTopics } from "./videoExporter";
+import { EXPORTABLE_TOPIC_SCHEMAS, getImageTopics } from "./videoExporter";
 
-describe("IMAGE_TOPIC_SCHEMAS", () => {
+describe("EXPORTABLE_TOPIC_SCHEMAS", () => {
   it("includes ROS and Foxglove image schema names", () => {
-    expect(IMAGE_TOPIC_SCHEMAS).toContain("sensor_msgs/Image");
-    expect(IMAGE_TOPIC_SCHEMAS).toContain("sensor_msgs/msg/Image");
-    expect(IMAGE_TOPIC_SCHEMAS).toContain("sensor_msgs/CompressedImage");
-    expect(IMAGE_TOPIC_SCHEMAS).toContain("sensor_msgs/msg/CompressedImage");
-    expect(IMAGE_TOPIC_SCHEMAS).toContain("foxglove.RawImage");
-    expect(IMAGE_TOPIC_SCHEMAS).toContain("foxglove.CompressedImage");
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("sensor_msgs/Image");
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("sensor_msgs/msg/Image");
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("sensor_msgs/CompressedImage");
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("sensor_msgs/msg/CompressedImage");
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("foxglove.RawImage");
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("foxglove.CompressedImage");
+  });
+
+  it("includes CompressedVideo schema names", () => {
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("foxglove.CompressedVideo");
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("foxglove_msgs/CompressedVideo");
+    expect(EXPORTABLE_TOPIC_SCHEMAS).toContain("foxglove_msgs/msg/CompressedVideo");
   });
 });
 
@@ -33,6 +39,18 @@ describe("getImageTopics", () => {
       "/camera/compressed",
       "/foxglove_cam",
     ]);
+  });
+
+  it("returns CompressedVideo topics", () => {
+    const topics = [
+      { name: "/camera/h264", schemaName: "foxglove.CompressedVideo" },
+      { name: "/camera/h264_ros2", schemaName: "foxglove_msgs/msg/CompressedVideo" },
+      { name: "/imu/data", schemaName: "sensor_msgs/Imu" },
+    ];
+
+    const result = getImageTopics(topics);
+    expect(result).toHaveLength(2);
+    expect(result.map((t) => t.name)).toEqual(["/camera/h264", "/camera/h264_ros2"]);
   });
 
   it("returns empty array when no image topics exist", () => {
