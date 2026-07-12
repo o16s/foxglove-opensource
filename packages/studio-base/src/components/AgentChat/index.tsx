@@ -2,6 +2,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import SendIcon from "@mui/icons-material/Send";
 import {
   CircularProgress,
@@ -9,6 +10,7 @@ import {
   InputAdornment,
   LinearProgress,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -27,10 +29,10 @@ import { usePlayerSelection } from "@foxglove/studio-base/context/PlayerSelectio
 import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
 
 import AgentAvatarSvg from "./agent-avatar.svg";
-import { runAgentLoop } from "./agentLoop";
+import { ExecuteToolFn, runAgentLoop } from "./agentLoop";
 import { createRemoteProvider, createWebLLMProvider } from "./completionProvider";
 import { parseMarkdown } from "./parseMarkdown";
-import { initWebLLMEngine, getWebLLMStatus, subscribeWebLLMStatus, WebLLMStatus } from "./webllmEngine";
+import { initWebLLMEngine, unloadWebLLMEngine, getWebLLMStatus, subscribeWebLLMStatus, WebLLMStatus } from "./webllmEngine";
 import { buildSystemPrompt } from "./systemPrompt";
 import { TOOL_DEFINITIONS } from "./toolDefinitions";
 import { Incident, createToolExecutor, StudioContext } from "./toolExecutor";
@@ -184,7 +186,9 @@ export default function AgentChat(): ReactElement {
         if (!block) continue;
         const topicMessages = block.messagesByTopic[topic];
         if (topicMessages) {
-          result.push(...topicMessages);
+          for (const msg of topicMessages) {
+            result.push(msg);
+          }
         }
       }
       return result;
@@ -213,6 +217,24 @@ export default function AgentChat(): ReactElement {
       startTime,
     };
   }, [topics, datatypes, panelTypes, getCurrentLayoutState, addPanel, changePanelLayout, savePanelConfigs, seekPlayback, selectSource, getBlockMessages, incidents, startTime]);
+
+  // Keep a ref so tool calls mid-loop always see the latest context
+  const studioContextRef = useRef(studioContext);
+  studioContextRef.current = studioContext;
+
+  // Unload WebLLM engine when switching away from webllm backend to free GPU memory
+  const prevBackendRef = useRef(backend);
+  useEffect(() => {
+    if (prevBackendRef.current === "webllm" && backend !== "webllm") {
+      unloadWebLLMEngine();
+    }
+    prevBackendRef.current = backend;
+  }, [backend]);
+
+  const handleClear = useCallback(() => {
+    setMessages([]);
+    persistedMessages = [];
+  }, []);
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
@@ -243,7 +265,9 @@ export default function AgentChat(): ReactElement {
       }
 
       const conversationWithSystem = [systemMessage, ...updatedMessages];
-      const executeTool = createToolExecutor(studioContext);
+      // Each tool call creates a fresh executor from the ref so it sees the latest context
+      const executeTool: ExecuteToolFn = async (name, args) =>
+        createToolExecutor(studioContextRef.current)(name, args);
 
       const result = await runAgentLoop({
         messages: conversationWithSystem,
@@ -265,7 +289,8 @@ export default function AgentChat(): ReactElement {
       setLoading(false);
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [input, loading, backend, apiEndpoint, apiKey, model, webllmModel, webllmCtxSize, messages, panelTypes, studioContext]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- studioContextRef is intentionally read via ref to avoid stale closures
+  }, [input, loading, backend, apiEndpoint, apiKey, model, webllmModel, webllmCtxSize, messages, panelTypes]);
 
   const isRemote = backend !== "webllm";
   const configured = isRemote ? apiEndpoint && apiKey && model : !!webllmModel;
@@ -351,6 +376,15 @@ export default function AgentChat(): ReactElement {
           }}
           disabled={loading}
           InputProps={{
+            startAdornment: messages.length > 0 && !loading ? (
+              <InputAdornment position="start">
+                <Tooltip title="Clear chat">
+                  <IconButton size="small" onClick={handleClear}>
+                    <DeleteOutlineIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </InputAdornment>
+            ) : undefined,
             endAdornment: (
               <InputAdornment position="end">
                 <IconButton size="small" onClick={() => void handleSend()} disabled={loading || !input.trim()}>

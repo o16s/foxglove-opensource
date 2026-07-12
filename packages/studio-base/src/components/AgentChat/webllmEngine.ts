@@ -18,6 +18,11 @@ let currentContextSize: number | undefined;
 let currentStatus: WebLLMStatus = { state: "idle" };
 const listeners = new Set<(status: WebLLMStatus) => void>();
 
+// Guard against concurrent init calls
+let loadingPromise: Promise<EngineWithUnload> | undefined;
+let loadingModelId: string | undefined;
+let loadingContextSize: number | undefined;
+
 function setStatus(status: WebLLMStatus) {
   currentStatus = status;
   for (const listener of listeners) {
@@ -46,6 +51,11 @@ export async function initWebLLMEngine(
     return currentEngine;
   }
 
+  // Deduplicate concurrent calls for the same model+context
+  if (loadingPromise && loadingModelId === modelId && loadingContextSize === contextSize) {
+    return loadingPromise;
+  }
+
   if (currentEngine) {
     currentEngine.unload();
     currentEngine = undefined;
@@ -55,7 +65,7 @@ export async function initWebLLMEngine(
 
   setStatus({ state: "loading" });
 
-  try {
+  const promise = (async () => {
     const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
     const chatOpts = contextSize ? { context_window_size: contextSize } : undefined;
     const engine = (await CreateMLCEngine(modelId, {
@@ -69,9 +79,32 @@ export async function initWebLLMEngine(
     currentContextSize = contextSize;
     setStatus({ state: "ready" });
     return engine;
+  })();
+
+  loadingPromise = promise;
+  loadingModelId = modelId;
+  loadingContextSize = contextSize;
+
+  try {
+    return await promise;
   } catch (err) {
     setStatus({ state: "error", error: err instanceof Error ? err.message : String(err) });
     throw err;
+  } finally {
+    loadingPromise = undefined;
+    loadingModelId = undefined;
+    loadingContextSize = undefined;
+  }
+}
+
+/** Unload the engine to release GPU memory. */
+export function unloadWebLLMEngine(): void {
+  if (currentEngine) {
+    currentEngine.unload();
+    currentEngine = undefined;
+    currentModelId = undefined;
+    currentContextSize = undefined;
+    setStatus({ state: "idle" });
   }
 }
 
@@ -81,5 +114,8 @@ export function resetWebLLMEngine(): void {
   currentModelId = undefined;
   currentContextSize = undefined;
   currentStatus = { state: "idle" };
+  loadingPromise = undefined;
+  loadingModelId = undefined;
+  loadingContextSize = undefined;
   listeners.clear();
 }

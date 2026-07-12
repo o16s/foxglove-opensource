@@ -6,11 +6,53 @@ import * as _ from "lodash-es";
 
 import { fromRFC3339String, toRFC3339String, Time } from "@foxglove/rostime";
 
+import { LayoutData } from "@foxglove/studio-base/context/CurrentLayoutContext/actions";
+
 export type AppURLState = {
   ds?: string;
   dsParams?: Record<string, string>;
   time?: Time;
+  layoutParam?: LayoutData;
+  layoutUrl?: string;
 };
+
+/**
+ * Parse a layout parameter value (base64 or raw JSON) into LayoutData.
+ * Returns undefined if parsing fails or the result is not a valid layout.
+ */
+export function parseLayoutParam(value: string): LayoutData | undefined {
+  let parsed: unknown;
+
+  // Try base64 first, then raw JSON
+  try {
+    parsed = JSON.parse(atob(value));
+  } catch {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (typeof parsed !== "object" || parsed == undefined) {
+    return undefined;
+  }
+
+  const obj = parsed as Record<string, unknown>;
+
+  // layout field is required
+  if (!("layout" in obj) || obj.layout == undefined) {
+    return undefined;
+  }
+
+  return {
+    layout: obj.layout as LayoutData["layout"],
+    configById: (obj.configById ?? {}) as LayoutData["configById"],
+    globalVariables: (obj.globalVariables ?? {}) as LayoutData["globalVariables"],
+    userNodes: (obj.userNodes ?? {}) as LayoutData["userNodes"],
+    playbackConfig: (obj.playbackConfig ?? { speed: 1 }) as LayoutData["playbackConfig"],
+  };
+}
 
 /**
  * Encodes app state in a URL's query params.
@@ -74,11 +116,17 @@ export function parseAppURLState(url: URL): AppURLState | undefined {
     }
   });
 
+  const layoutParamValue = url.searchParams.get("layout") ?? undefined;
+  const layoutParam = layoutParamValue ? parseLayoutParam(layoutParamValue) : undefined;
+  const layoutUrl = url.searchParams.get("layoutUrl") ?? undefined;
+
   const state: AppURLState = _.omitBy(
     {
       time,
       ds,
       dsParams: _.isEmpty(dsParams) ? undefined : dsParams,
+      layoutParam,
+      layoutUrl,
     },
     _.isEmpty,
   );

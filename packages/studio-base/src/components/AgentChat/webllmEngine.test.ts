@@ -22,7 +22,7 @@ jest.mock("@mlc-ai/web-llm", () => {
   };
 });
 
-import { initWebLLMEngine, getWebLLMStatus, subscribeWebLLMStatus, resetWebLLMEngine } from "./webllmEngine";
+import { initWebLLMEngine, getWebLLMStatus, subscribeWebLLMStatus, resetWebLLMEngine, unloadWebLLMEngine } from "./webllmEngine";
 
 beforeEach(() => {
   resetWebLLMEngine();
@@ -76,5 +76,34 @@ describe("WebLLM engine singleton", () => {
 
     await expect(initWebLLMEngine("bad-model")).rejects.toThrow("WebGPU not available");
     expect(getWebLLMStatus()).toEqual({ state: "error", error: "WebGPU not available" });
+  });
+
+  it("deduplicates concurrent calls for the same model", async () => {
+    const webllm = jest.requireMock("@mlc-ai/web-llm");
+
+    // Start two loads concurrently for the same model
+    const promise1 = initWebLLMEngine("concurrent-model");
+    const promise2 = initWebLLMEngine("concurrent-model");
+
+    const [engine1, engine2] = await Promise.all([promise1, promise2]);
+
+    expect(engine1).toBe(engine2);
+    expect(webllm.CreateMLCEngine).toHaveBeenCalledTimes(1);
+  });
+
+  it("unloadWebLLMEngine releases GPU memory and resets to idle", async () => {
+    const engine = await initWebLLMEngine("model-to-unload");
+    expect(getWebLLMStatus()).toEqual({ state: "ready" });
+
+    unloadWebLLMEngine();
+
+    expect(engine.unload).toHaveBeenCalled();
+    expect(getWebLLMStatus()).toEqual({ state: "idle" });
+
+    // Next init should create a new engine (not reuse)
+    const webllm = jest.requireMock("@mlc-ai/web-llm");
+    webllm.CreateMLCEngine.mockClear();
+    await initWebLLMEngine("model-to-unload");
+    expect(webllm.CreateMLCEngine).toHaveBeenCalledTimes(1);
   });
 });

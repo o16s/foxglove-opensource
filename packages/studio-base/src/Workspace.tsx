@@ -57,6 +57,7 @@ import {
   WorkspaceContextStore,
   useWorkspaceStore,
 } from "@foxglove/studio-base/context/Workspace/WorkspaceContext";
+import { useCurrentLayoutActions } from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
 import { useDefaultWebLaunchPreference } from "@foxglove/studio-base/hooks/useDefaultWebLaunchPreference";
 import useElectronFilesToOpen from "@foxglove/studio-base/hooks/useElectronFilesToOpen";
@@ -64,7 +65,7 @@ import { PlayerPresence } from "@foxglove/studio-base/players/types";
 import { PanelStateContextProvider } from "@foxglove/studio-base/providers/PanelStateContextProvider";
 import WorkspaceContextProvider from "@foxglove/studio-base/providers/WorkspaceContextProvider";
 import { storeDownloadedFiles } from "@foxglove/studio-base/dataSources/McapServerDataSourceFactory";
-import { parseAppURLState } from "@foxglove/studio-base/util/appURLState";
+import { parseAppURLState, parseLayoutParam } from "@foxglove/studio-base/util/appURLState";
 
 import { useWorkspaceActions } from "./context/Workspace/useWorkspaceActions";
 
@@ -448,6 +449,65 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
     seek(unappliedTime.time);
     setUnappliedTime({ time: undefined });
   }, [playerPresence, seek, unappliedTime]);
+
+  // Apply layout from ?layout= or ?layoutUrl= URL params.
+  const { setCurrentLayout } = useCurrentLayoutActions();
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+
+    // ?layout= takes inline base64 or JSON
+    const layoutParam = params.get("layout");
+    if (layoutParam) {
+      const layoutData = parseLayoutParam(layoutParam);
+      if (layoutData) {
+        log.debug("Applying layout from URL param");
+        setCurrentLayout({ data: layoutData });
+      } else {
+        log.error("Invalid layout parameter in URL");
+        enqueueSnackbar("Invalid layout parameter in URL", { variant: "error" });
+      }
+      return;
+    }
+
+    // ?layoutUrl= fetches layout JSON from a URL
+    const layoutUrl = params.get("layoutUrl");
+    if (!layoutUrl) {
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    (async () => {
+      try {
+        log.debug(`Fetching layout from URL: ${layoutUrl}`);
+        const res = await fetch(layoutUrl, { signal: abortController.signal });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const text = await res.text();
+        const layoutData = parseLayoutParam(text);
+        if (layoutData) {
+          setCurrentLayout({ data: layoutData });
+        } else {
+          throw new Error("Invalid layout JSON");
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          return;
+        }
+        log.error(`Failed to load layout from URL: ${err}`);
+        enqueueSnackbar(`Failed to load layout from URL: ${layoutUrl}`, { variant: "error" });
+      }
+    })();
+
+    return () => {
+      abortController.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Open a specific file directly via ?file= URL param.
   // Matches the path against the server MCAP index, downloads, and opens it.

@@ -75,6 +75,67 @@ Base64-encoded (recommended for complex payloads):
 /?t=1720619400&incidents=W3sidGltZSI6IjIwMjYtMDctMTBUMTQ6MzA6MDBaIiwic3VtbWFyeSI6Ik1vdG9yIG92ZXJ0ZW1wIiwic2V2ZXJpdHkiOiJ3YXJuaW5nIn1d
 ```
 
+## Layout
+
+Load a panel layout from the URL, replacing the current layout on page load.
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `layout` | `?layout=<base64 or JSON>` | Inline layout JSON (base64-encoded recommended). Accepts raw JSON or base64. |
+| `layoutUrl` | `?layoutUrl=<url>` | URL to a layout JSON file. Fetched on page load. Better for complex layouts. |
+
+If both are present, `layout` takes precedence.
+
+### Layout JSON Structure
+
+```json
+{
+  "layout": {
+    "first": "Image!abc",
+    "second": "Plot!def",
+    "direction": "row",
+    "splitPercentage": 50
+  },
+  "configById": {
+    "Image!abc": { "cameraTopic": "/camera/image" },
+    "Plot!def": { "paths": [{ "value": "/imu/data.linear_acceleration.x", "enabled": true }] }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `layout` | Yes | Mosaic tree — either a panel ID string (single panel) or a `{first, second, direction, splitPercentage}` object |
+| `configById` | No | Panel configurations keyed by panel ID. Defaults to `{}` |
+| `globalVariables` | No | Global variables. Defaults to `{}` |
+| `userNodes` | No | User scripts. Defaults to `{}` |
+| `playbackConfig` | No | Playback settings. Defaults to `{ speed: 1 }` |
+
+### Examples
+
+Single panel (inline JSON):
+```
+/?layout={"layout":"Plot!abc","configById":{"Plot!abc":{"paths":[{"value":"/imu.accel.x","enabled":true}]}}}
+```
+
+Base64-encoded (recommended):
+```
+/?layout=eyJsYXlvdXQiOiJQbG90IWFiYyIsImNvbmZpZ0J5SWQiOnsiUGxvdCFhYmMiOnsicGF0aHMiOlt7InZhbHVlIjoiL2ltdS5hY2NlbC54IiwiZW5hYmxlZCI6dHJ1ZX1dfX19
+```
+
+Remote layout file:
+```
+/?layoutUrl=https://your-server.com/layouts/vibration-dashboard.json
+```
+
+Combined with data source:
+```
+/?ds=foxglove-websocket&ds.url=wss://192.168.1.100:8765&layoutUrl=https://your-server.com/layouts/default.json
+```
+
 ## Data Source Selection
 
 Use `ds` to auto-connect to a data source on page load. Source-specific parameters are prefixed with `ds.`.

@@ -35,6 +35,16 @@ ${panelTypes.map((t) => `- ${t}`).join("\n")}
 **3D panel** — 3D visualization (auto-subscribes to relevant topics):
   {}
 
+**Gauge panel** — shows a single numeric value on a gauge dial:
+  { "path": "<topicName>.<field>", "minValue": 0, "maxValue": 100 }
+  The "path" uses the SAME format as Plot paths — topic name followed by field path with dots.
+  Example: { "path": "/imu/data.linear_acceleration.x", "minValue": -10, "maxValue": 10 }
+  Example: { "path": "iolink/vibration1/pdin.vrms_x", "minValue": 0, "maxValue": 1 }
+
+**Indicator panel** — shows a colored status indicator based on rules:
+  { "path": "<topicName>.<field>", "style": "bulb", "fallbackColor": "#aaa", "fallbackLabel": "N/A", "rules": [{ "operator": ">", "rawValue": "80", "color": "#f00", "label": "HIGH" }] }
+  The "path" uses the SAME format as Plot paths.
+
 **RawMessages panel** — inspect raw message data:
   { "topicPath": "<topicName>" }
   Use the EXACT topic name from list_topics. Do NOT add a leading "/".
