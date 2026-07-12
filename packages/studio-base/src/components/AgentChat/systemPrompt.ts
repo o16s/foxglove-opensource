@@ -27,9 +27,9 @@ ${panelTypes.map((t) => `- ${t}`).join("\n")}
   IMPORTANT rules for Plot paths:
   - Always use "timestampMethod": "receiveTime" (this is required for data to appear)
   - The path value is the EXACT topic name from list_topics, followed by "." and field names
-  - Do NOT add a leading "/" — use the topic name exactly as returned by list_topics
-  - Example: if list_topics returns topic "sensors/imu", the path is "sensors/imu.linear_acceleration.x"
-  - Example: if list_topics returns topic "/odom", the path is "/odom.pose.position.x" (slash is part of the name)
+  - Topic names always start with "/" — use the topic name exactly as returned by list_topics
+  - Example: if list_topics returns topic "/sensors/imu", the path is "/sensors/imu.linear_acceleration.x"
+  - Example: if list_topics returns topic "/odom", the path is "/odom.pose.position.x"
   - Use get_topic_fields or search_topic_fields to discover available fields before building paths
 
 **3D panel** — 3D visualization (auto-subscribes to relevant topics):
@@ -39,7 +39,7 @@ ${panelTypes.map((t) => `- ${t}`).join("\n")}
   { "path": "<topicName>.<field>", "minValue": 0, "maxValue": 100 }
   The "path" uses the SAME format as Plot paths — topic name followed by field path with dots.
   Example: { "path": "/imu/data.linear_acceleration.x", "minValue": -10, "maxValue": 10 }
-  Example: { "path": "iolink/vibration1/pdin.vrms_x", "minValue": 0, "maxValue": 1 }
+  Example: { "path": "/iolink/vibration1/pdin.vrms_x", "minValue": 0, "maxValue": 1 }
 
 **Indicator panel** — shows a colored status indicator based on rules:
   { "path": "<topicName>.<field>", "style": "bulb", "fallbackColor": "#aaa", "fallbackLabel": "N/A", "rules": [{ "operator": ">", "rawValue": "80", "color": "#f00", "label": "HIGH" }] }
@@ -47,8 +47,8 @@ ${panelTypes.map((t) => `- ${t}`).join("\n")}
 
 **RawMessages panel** — inspect raw message data:
   { "topicPath": "<topicName>" }
-  Use the EXACT topic name from list_topics. Do NOT add a leading "/".
-  Example: topic "gps/fix" → topicPath is "gps/fix". Topic "/odom" → topicPath is "/odom".
+  Use the EXACT topic name from list_topics (always starts with "/").
+  Example: topic "/gps/fix" → topicPath is "/gps/fix".
 
 ## Layout Structure
 

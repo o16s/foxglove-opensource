@@ -26,6 +26,7 @@ import {
   MessageIteratorArgs,
 } from "@foxglove/studio-base/players/IterablePlayer/IIterableSource";
 import { estimateObjectSize } from "@foxglove/studio-base/players/messageMemoryEstimation";
+import { normalizeTopic } from "@foxglove/studio-base/players/normalizeTopic";
 import { PlayerProblem, Topic, TopicStats } from "@foxglove/studio-base/players/types";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 
@@ -66,6 +67,7 @@ export class McapUnindexedIterableSource implements IIterableSource {
         channel: McapTypes.Channel;
         parsedChannel: ParsedChannel;
         schemaName: string | undefined;
+        topicName: string;
       }
     >();
     const messageSizeEstimateByTopic: Record<string, number> = {};
@@ -128,6 +130,7 @@ export class McapUnindexedIterableSource implements IIterableSource {
               channel: record,
               parsedChannel,
               schemaName: schema?.name,
+              topicName: normalizeTopic(record.topic),
             });
             messagesByChannel.set(record.id, []);
           } catch (error) {
@@ -161,11 +164,11 @@ export class McapUnindexedIterableSource implements IIterableSource {
           }
           const deserializedMessage = channelInfo.parsedChannel.deserialize(record.data);
           const estimatedMemorySize = estimateMessageSize(
-            channelInfo.channel.topic,
+            channelInfo.topicName,
             deserializedMessage,
           );
           messages.push({
-            topic: channelInfo.channel.topic,
+            topic: channelInfo.topicName,
             receiveTime,
             publishTime: fromNanoSec(record.publishTime),
             message: deserializedMessage,
@@ -192,21 +195,21 @@ export class McapUnindexedIterableSource implements IIterableSource {
     const datatypes: RosDatatypes = new Map();
     const publishersByTopic = new Map<string, Set<string>>();
 
-    for (const { channel, parsedChannel, schemaName } of channelInfoById.values()) {
-      topics.push({ name: channel.topic, schemaName });
+    for (const { channel, parsedChannel, schemaName, topicName } of channelInfoById.values()) {
+      topics.push({ name: topicName, schemaName });
       const numMessages = messagesByChannel.get(channel.id)?.length;
       if (numMessages != undefined) {
-        topicStats.set(channel.topic, { numMessages });
+        topicStats.set(topicName, { numMessages });
       }
 
       // Track the publisher for this topic. "callerid" is defined in the MCAP ROS 1 Well-known
       // profile at <https://mcap.dev/specification/appendix.html>. We skip the profile check to
       // allow non-ROS profiles to utilize this functionality as well
       const publisherId = channel.metadata.get("callerid") ?? String(channel.id);
-      let publishers = publishersByTopic.get(channel.topic);
+      let publishers = publishersByTopic.get(topicName);
       if (!publishers) {
         publishers = new Set();
-        publishersByTopic.set(channel.topic, publishers);
+        publishersByTopic.set(topicName, publishers);
       }
       publishers.add(publisherId);
 

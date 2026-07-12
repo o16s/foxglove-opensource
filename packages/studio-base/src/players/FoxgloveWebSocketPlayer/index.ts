@@ -18,6 +18,7 @@ import { ParameterValue } from "@foxglove/studio";
 import { Asset } from "@foxglove/studio-base/components/PanelExtensionAdapter";
 import PlayerProblemManager from "@foxglove/studio-base/players/PlayerProblemManager";
 import { estimateObjectSize } from "@foxglove/studio-base/players/messageMemoryEstimation";
+import { normalizeTopic } from "@foxglove/studio-base/players/normalizeTopic";
 import {
   AdvertiseOptions,
   MessageEvent,
@@ -473,18 +474,19 @@ export default class FoxgloveWebSocketPlayer implements Player {
           this.#emitState();
           continue;
         }
-        const existingChannel = this.#channelsByTopic.get(channel.topic);
+        const normalizedTopic = normalizeTopic(channel.topic);
+        const existingChannel = this.#channelsByTopic.get(normalizedTopic);
         if (existingChannel && !_.isEqual(channel, existingChannel.channel)) {
-          this.#problems.addProblem(`duplicate-topic:${channel.topic}`, {
+          this.#problems.addProblem(`duplicate-topic:${normalizedTopic}`, {
             severity: "error",
-            message: `Multiple channels advertise the same topic: ${channel.topic} (${existingChannel.channel.id} and ${channel.id})`,
+            message: `Multiple channels advertise the same topic: ${normalizedTopic} (${existingChannel.channel.id} and ${channel.id})`,
           });
           this.#emitState();
           continue;
         }
         const resolvedChannel = { channel, parsedChannel };
         this.#channelsById.set(channel.id, resolvedChannel);
-        this.#channelsByTopic.set(channel.topic, resolvedChannel);
+        this.#channelsByTopic.set(normalizedTopic, resolvedChannel);
       }
       this.#updateTopicsAndDatatypes();
       this.#emitState();
@@ -507,13 +509,13 @@ export default class FoxgloveWebSocketPlayer implements Player {
         for (const [subId, { channel }] of this.#resolvedSubscriptionsById) {
           if (channel.id === id) {
             this.#resolvedSubscriptionsById.delete(subId);
-            this.#resolvedSubscriptionsByTopic.delete(channel.topic);
+            this.#resolvedSubscriptionsByTopic.delete(normalizeTopic(channel.topic));
             this.#client?.unsubscribe(subId);
-            this.#unresolvedSubscriptions.add(channel.topic);
+            this.#unresolvedSubscriptions.add(normalizeTopic(channel.topic));
           }
         }
         this.#channelsById.delete(id);
-        this.#channelsByTopic.delete(chanInfo.channel.topic);
+        this.#channelsByTopic.delete(normalizeTopic(chanInfo.channel.topic));
       }
       this.#updateTopicsAndDatatypes();
       this.#emitState();
@@ -536,7 +538,7 @@ export default class FoxgloveWebSocketPlayer implements Player {
       try {
         this.#receivedBytes += data.byteLength;
         const receiveTime = this.#getCurrentTime();
-        const topic = chanInfo.channel.topic;
+        const topic = normalizeTopic(chanInfo.channel.topic);
         const deserializedMessage = chanInfo.parsedChannel.deserialize(data);
 
         // Lookup the size estimate for this topic or compute it if not found in the cache.
@@ -587,9 +589,9 @@ export default class FoxgloveWebSocketPlayer implements Player {
         stats.numMessages++;
         this.#topicsStats = topicStats;
       } catch (error) {
-        this.#problems.addProblem(`message:${chanInfo.channel.topic}`, {
+        this.#problems.addProblem(`message:${normalizeTopic(chanInfo.channel.topic)}`, {
           severity: "error",
-          message: `Failed to parse message on ${chanInfo.channel.topic}`,
+          message: `Failed to parse message on ${normalizeTopic(chanInfo.channel.topic)}`,
           error,
         });
       }
@@ -828,7 +830,7 @@ export default class FoxgloveWebSocketPlayer implements Player {
   #updateTopicsAndDatatypes() {
     // Build a new topics array from this._channelsById
     const topics: Topic[] = Array.from(this.#channelsById.values(), (chanInfo) => ({
-      name: chanInfo.channel.topic,
+      name: normalizeTopic(chanInfo.channel.topic),
       schemaName: chanInfo.channel.schemaName,
     }));
 

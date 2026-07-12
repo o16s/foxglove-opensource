@@ -17,6 +17,7 @@ import {
   MessageIteratorArgs,
 } from "@foxglove/studio-base/players/IterablePlayer/IIterableSource";
 import { estimateObjectSize } from "@foxglove/studio-base/players/messageMemoryEstimation";
+import { normalizeTopic } from "@foxglove/studio-base/players/normalizeTopic";
 import {
   PlayerProblem,
   SubscribePayload,
@@ -35,6 +36,7 @@ export class McapIndexedIterableSource implements IIterableSource {
       channel: McapTypes.Channel;
       parsedChannel: ParsedChannel;
       schemaName: string | undefined;
+      topicName: string;
     }
   >();
   #start?: Time;
@@ -64,11 +66,12 @@ export class McapIndexedIterableSource implements IIterableSource {
     const publishersByTopic = new Map<string, Set<string>>();
 
     for (const channel of this.#reader.channelsById.values()) {
+      const topicName = normalizeTopic(channel.topic);
       const schema = this.#reader.schemasById.get(channel.schemaId);
       if (channel.schemaId !== 0 && schema == undefined) {
         problems.push({
           severity: "error",
-          message: `Missing schema info for schema id ${channel.schemaId} (channel ${channel.id}, topic ${channel.topic})`,
+          message: `Missing schema info for schema id ${channel.schemaId} (channel ${channel.id}, topic ${topicName})`,
         });
         continue;
       }
@@ -79,7 +82,7 @@ export class McapIndexedIterableSource implements IIterableSource {
       } catch (error) {
         problems.push({
           severity: "error",
-          message: `Error in topic ${channel.topic} (channel ${channel.id}): ${error.message}`,
+          message: `Error in topic ${topicName} (channel ${channel.id}): ${error.message}`,
           error,
         });
         continue;
@@ -88,16 +91,17 @@ export class McapIndexedIterableSource implements IIterableSource {
         channel,
         parsedChannel,
         schemaName: schema?.name,
+        topicName,
       });
 
-      let topic = topicsByName.get(channel.topic);
+      let topic = topicsByName.get(topicName);
       if (!topic) {
-        topic = { name: channel.topic, schemaName: schema?.name };
-        topicsByName.set(channel.topic, topic);
+        topic = { name: topicName, schemaName: schema?.name };
+        topicsByName.set(topicName, topic);
 
         const numMessages = this.#reader.statistics?.channelMessageCounts.get(channel.id);
         if (numMessages != undefined) {
-          topicStats.set(channel.topic, { numMessages: Number(numMessages) });
+          topicStats.set(topicName, { numMessages: Number(numMessages) });
         }
       }
 
@@ -105,10 +109,10 @@ export class McapIndexedIterableSource implements IIterableSource {
       // profile at <https://mcap.dev/specification/appendix.html>. We skip the profile check to
       // allow non-ROS profiles to utilize this functionality as well
       const publisherId = channel.metadata.get("callerid") ?? String(channel.id);
-      let publishers = publishersByTopic.get(channel.topic);
+      let publishers = publishersByTopic.get(topicName);
       if (!publishers) {
         publishers = new Set();
-        publishersByTopic.set(channel.topic, publishers);
+        publishersByTopic.set(topicName, publishers);
       }
       publishers.add(publisherId);
 
@@ -178,10 +182,10 @@ export class McapIndexedIterableSource implements IIterableSource {
       }
       try {
         const msg = channelInfo.parsedChannel.deserialize(message.data) as Record<string, unknown>;
-        const spec = topicsWithSubscriptionHash.get(channelInfo.channel.topic);
+        const spec = topicsWithSubscriptionHash.get(channelInfo.topicName);
         const payload = spec?.fields != undefined ? pickFields(msg, spec.fields) : msg;
         const estimatedMemorySize = this.#estimateMessageSize(
-          spec?.subscriptionHash ?? channelInfo.channel.topic,
+          spec?.subscriptionHash ?? channelInfo.topicName,
           payload,
         );
         const sizeInBytes =
@@ -192,7 +196,7 @@ export class McapIndexedIterableSource implements IIterableSource {
         yield {
           type: "message-event",
           msgEvent: {
-            topic: channelInfo.channel.topic,
+            topic: channelInfo.topicName,
             receiveTime: fromNanoSec(message.logTime),
             publishTime: fromNanoSec(message.publishTime),
             message: payload,
@@ -205,7 +209,7 @@ export class McapIndexedIterableSource implements IIterableSource {
           type: "problem",
           connectionId: message.channelId,
           problem: {
-            message: `Error decoding message on ${channelInfo.channel.topic}`,
+            message: `Error decoding message on ${channelInfo.topicName}`,
             error,
             severity: "error",
           },
@@ -238,10 +242,10 @@ export class McapIndexedIterableSource implements IIterableSource {
           const deserializedMessage = channelInfo.parsedChannel.deserialize(message.data);
           const sizeInBytes = Math.max(
             message.data.byteLength,
-            this.#estimateMessageSize(channelInfo.channel.topic, deserializedMessage),
+            this.#estimateMessageSize(channelInfo.topicName, deserializedMessage),
           );
           messages.push({
-            topic: channelInfo.channel.topic,
+            topic: channelInfo.topicName,
             receiveTime: fromNanoSec(message.logTime),
             publishTime: fromNanoSec(message.publishTime),
             message: deserializedMessage,
