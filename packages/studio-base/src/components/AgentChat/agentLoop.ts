@@ -2,6 +2,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { ChatCompletionProvider, trimConversation } from "./completionProvider";
 import { ChatMessage, ToolDefinition } from "./types";
 
 export type ExecuteToolFn = (name: string, args: Record<string, unknown>) => Promise<string>;
@@ -9,11 +10,8 @@ export type ExecuteToolFn = (name: string, args: Record<string, unknown>) => Pro
 export type AgentLoopParams = {
   messages: ChatMessage[];
   tools: ToolDefinition[];
-  fetchFn: typeof fetch;
+  completionProvider: ChatCompletionProvider;
   executeTool: ExecuteToolFn;
-  apiEndpoint: string;
-  apiKey: string;
-  model: string;
 };
 
 export type AgentLoopResult = {
@@ -22,45 +20,18 @@ export type AgentLoopResult = {
 
 const MAX_ITERATIONS = 10;
 
-async function callApi(
-  fetchFn: typeof fetch,
-  apiEndpoint: string,
-  apiKey: string,
-  model: string,
-  conversation: ChatMessage[],
-  tools: ToolDefinition[],
-) {
-  const response = await fetchFn(`${apiEndpoint}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: conversation,
-      ...(tools.length > 0 ? { tools } : {}),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
-  }
-
-  return response.json();
-}
-
 export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopResult> {
-  const { messages, tools, fetchFn, executeTool, apiEndpoint, apiKey, model } = params;
+  const { messages, tools, completionProvider, executeTool } = params;
   const conversation = [...messages];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const data = await callApi(fetchFn, apiEndpoint, apiKey, model, conversation, tools);
+    const trimmed = trimConversation(conversation);
+    const data = await completionProvider({ messages: trimmed, tools });
     const choice = data.choices[0];
     const assistantMessage: ChatMessage = {
       role: "assistant",
-      content: choice.message.content ?? undefined,
-      ...(choice.message.tool_calls ? { tool_calls: choice.message.tool_calls } : {}),
+      content: choice?.message.content ?? undefined,
+      ...(choice?.message.tool_calls ? { tool_calls: choice.message.tool_calls } : {}),
     };
     conversation.push(assistantMessage);
 

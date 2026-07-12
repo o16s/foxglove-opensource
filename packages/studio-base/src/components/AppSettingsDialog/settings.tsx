@@ -14,6 +14,7 @@ import {
   FormControl,
   FormControlLabel,
   FormLabel,
+  LinearProgress,
   MenuItem,
   Select,
   SelectChangeEvent,
@@ -21,9 +22,10 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   ToggleButtonGroupProps,
+  Typography,
 } from "@mui/material";
 import moment from "moment-timezone";
-import { MouseEvent, useCallback, useMemo } from "react";
+import { MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { makeStyles } from "tss-react/mui";
 
@@ -396,40 +398,158 @@ export function LanguageSettings(): React.ReactElement {
 }
 
 export function AgentSettings(): JSX.Element {
+  const [backend = "remote", setBackend] = useAppConfigurationValue<string>(
+    AppSetting.AGENT_BACKEND,
+  );
   const [apiEndpoint = "", setApiEndpoint] = useAppConfigurationValue<string>(
     AppSetting.AGENT_API_ENDPOINT,
   );
   const [apiKey = "", setApiKey] = useAppConfigurationValue<string>(AppSetting.AGENT_API_KEY);
   const [model = "", setModel] = useAppConfigurationValue<string>(AppSetting.AGENT_MODEL);
+  const [webllmModel = "", setWebllmModel] = useAppConfigurationValue<string>(
+    AppSetting.AGENT_WEBLLM_MODEL,
+  );
+  const [ramTier, setRamTier] = useState<number>(8);
+  const [webllmStatus, setWebllmStatus] = useState<
+    { state: string; progress?: number; text?: string; error?: string }
+  >({ state: "idle" });
+
+  const hasWebGPU = typeof navigator !== "undefined" && "gpu" in navigator;
+
+  // Subscribe to WebLLM status updates
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { getWebLLMStatus, subscribeWebLLMStatus } = await import(
+          "@foxglove/studio-base/components/AgentChat/webllmEngine"
+        );
+        setWebllmStatus(getWebLLMStatus());
+        unsub = subscribeWebLLMStatus(setWebllmStatus);
+      } catch {
+        // webllm not available
+      }
+    })();
+    return () => unsub?.();
+  }, []);
+
+  const availableModels = useMemo(() => {
+    // Dynamic import would be async; use static import for the model catalog
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { getModelsForRAM } = require("@foxglove/studio-base/components/AgentChat/webllmModels") as typeof import("@foxglove/studio-base/components/AgentChat/webllmModels");
+      return getModelsForRAM(ramTier);
+    } catch {
+      return [];
+    }
+  }, [ramTier]);
 
   return (
     <Stack gap={1.5}>
       <FormLabel>AI Agent:</FormLabel>
-      <TextField
+      <ToggleButtonGroup
+        color="primary"
         size="small"
-        label="API Endpoint"
-        placeholder="https://api.openai.com/v1"
-        value={apiEndpoint}
-        onChange={(e) => void setApiEndpoint(e.target.value)}
         fullWidth
-      />
-      <TextField
-        size="small"
-        label="API Key"
-        type="password"
-        placeholder="sk-..."
-        value={apiKey}
-        onChange={(e) => void setApiKey(e.target.value)}
-        fullWidth
-      />
-      <TextField
-        size="small"
-        label="Model"
-        placeholder="gpt-4o"
-        value={model}
-        onChange={(e) => void setModel(e.target.value)}
-        fullWidth
-      />
+        exclusive
+        value={backend}
+        onChange={(_, value?: string) => {
+          if (value != undefined) {
+            void setBackend(value);
+          }
+        }}
+      >
+        <ToggleButton value="remote">Remote API</ToggleButton>
+        <ToggleButton value="webllm" disabled={!hasWebGPU}>
+          Local (WebLLM)
+        </ToggleButton>
+      </ToggleButtonGroup>
+      {!hasWebGPU && backend !== "webllm" && (
+        <Typography variant="caption" color="text.secondary">
+          WebLLM requires WebGPU, which is not available in this browser.
+        </Typography>
+      )}
+      {backend === "remote" && (
+        <>
+          <TextField
+            size="small"
+            label="API Endpoint"
+            placeholder="https://api.openai.com/v1"
+            value={apiEndpoint}
+            onChange={(e) => void setApiEndpoint(e.target.value)}
+            fullWidth
+          />
+          <TextField
+            size="small"
+            label="API Key"
+            type="password"
+            placeholder="sk-..."
+            value={apiKey}
+            onChange={(e) => void setApiKey(e.target.value)}
+            fullWidth
+          />
+          <TextField
+            size="small"
+            label="Model"
+            placeholder="gpt-4o"
+            value={model}
+            onChange={(e) => void setModel(e.target.value)}
+            fullWidth
+          />
+        </>
+      )}
+      {backend === "webllm" && (
+        <>
+          <Select
+            size="small"
+            value={ramTier}
+            onChange={(e) => setRamTier(e.target.value as number)}
+            fullWidth
+          >
+            <MenuItem value={8}>8 GB RAM</MenuItem>
+            <MenuItem value={16}>16 GB RAM</MenuItem>
+            <MenuItem value={24}>24 GB RAM</MenuItem>
+            <MenuItem value={64}>64 GB RAM</MenuItem>
+          </Select>
+          <Select
+            size="small"
+            value={webllmModel}
+            onChange={(e) => void setWebllmModel(e.target.value)}
+            fullWidth
+            displayEmpty
+          >
+            <MenuItem value="" disabled>
+              Select a model...
+            </MenuItem>
+            {availableModels.map((m) => (
+              <MenuItem key={m.id} value={m.id}>
+                {m.label}
+              </MenuItem>
+            ))}
+          </Select>
+          {webllmStatus.state === "loading" && (
+            <Stack gap={0.5}>
+              <LinearProgress
+                variant={webllmStatus.progress != undefined ? "determinate" : "indeterminate"}
+                value={(webllmStatus.progress ?? 0) * 100}
+              />
+              <Typography variant="caption" color="text.secondary">
+                {webllmStatus.text ?? "Loading model..."}
+              </Typography>
+            </Stack>
+          )}
+          {webllmStatus.state === "ready" && (
+            <Typography variant="caption" color="success.main">
+              Model loaded and ready
+            </Typography>
+          )}
+          {webllmStatus.state === "error" && (
+            <Typography variant="caption" color="error.main">
+              Error: {webllmStatus.error}
+            </Typography>
+          )}
+        </>
+      )}
     </Stack>
   );
 }

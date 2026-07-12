@@ -24,9 +24,11 @@ export enum AppSetting {
   ENABLE_UNIFIED_NAVIGATION = "ui.new-app-menu",
 
   // Agent / AI assistant
+  AGENT_BACKEND = "agent.backend",
   AGENT_API_ENDPOINT = "agent.apiEndpoint",
   AGENT_API_KEY = "agent.apiKey",
   AGENT_MODEL = "agent.model",
+  AGENT_WEBLLM_MODEL = "agent.webllm.model",
 
   // Dev only
   ENABLE_LAYOUT_DEBUGGING = "enableLayoutDebugging",

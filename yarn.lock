@@ -2557,6 +2557,7 @@ __metadata:
     "@foxglove/wasm-lz4": 1.0.2
     "@foxglove/ws-protocol": 0.7.2
     "@mcap/core": 2.0.2
+    "@mlc-ai/web-llm": ^0.2
     "@mui/icons-material": 5.15.5
     "@mui/material": 5.15.6
     "@popperjs/core": ^2.11.8
@@ -3267,6 +3268,15 @@ __metadata:
   peerDependencies:
     react: ">=16"
   checksum: f45fe779556e6cd9a787f711274480e0638b63c460f192ebdcd77cc07ffa61e23c98cb46dd46e577093e1cb4997a232a848d1fb0ba850ae204422cf603add524
+  languageName: node
+  linkType: hard
+
+"@mlc-ai/web-llm@npm:^0.2":
+  version: 0.2.84
+  resolution: "@mlc-ai/web-llm@npm:0.2.84"
+  dependencies:
+    loglevel: ^1.9.1
+  checksum: fd86cb5260d5e97960e35ba7c96c99ef94d35c2ff491ef85bff21499841501df4febf6af07fd2b00aeb1c503116c673f182163b2cfd739f4fe09671c29c365a6
   languageName: node
   linkType: hard
 
@@ -14434,6 +14444,13 @@ __metadata:
     chalk: ^4.1.0
     is-unicode-supported: ^0.1.0
   checksum: fce1497b3135a0198803f9f07464165e9eb83ed02ceb2273930a6f8a508951178d8cf4f0378e9d28300a2ed2bc49050995d2bd5f53ab716bb15ac84d58c6ef74
+  languageName: node
+  linkType: hard
+
+"loglevel@npm:^1.9.1":
+  version: 1.9.2
+  resolution: "loglevel@npm:1.9.2"
+  checksum: 896c67b90a507bfcfc1e9a4daa7bf789a441dd70d95cd13b998d6dd46233a3bfadfb8fadb07250432bbfb53bf61e95f2520f9b11f9d3175cc460e5c251eca0af
   languageName: node
   linkType: hard
 

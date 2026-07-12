@@ -7,10 +7,11 @@ import {
   CircularProgress,
   IconButton,
   InputAdornment,
+  LinearProgress,
   TextField,
   Typography,
 } from "@mui/material";
-import { ReactElement, useCallback, useMemo, useRef, useState } from "react";
+import { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { makeStyles } from "tss-react/mui";
 
 import { MessageEvent } from "@foxglove/studio";
@@ -27,7 +28,9 @@ import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
 
 import AgentAvatarSvg from "./agent-avatar.svg";
 import { runAgentLoop } from "./agentLoop";
+import { createRemoteProvider, createWebLLMProvider } from "./completionProvider";
 import { parseMarkdown } from "./parseMarkdown";
+import { initWebLLMEngine, getWebLLMStatus, subscribeWebLLMStatus, WebLLMStatus } from "./webllmEngine";
 import { buildSystemPrompt } from "./systemPrompt";
 import { TOOL_DEFINITIONS } from "./toolDefinitions";
 import { Incident, createToolExecutor, StudioContext } from "./toolExecutor";
@@ -117,16 +120,30 @@ const selectStartTime = (ctx: MessagePipelineContext) =>
   ctx.playerState.activeData?.startTime;
 
 
+// Persist chat state across sidebar tab switches (component unmount/remount)
+let persistedMessages: ChatMessage[] = [];
+let persistedInput = "";
+
 export default function AgentChat(): ReactElement {
   const { classes, cx } = useStyles();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>(persistedMessages);
+  const [input, setInput] = useState(persistedInput);
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => { persistedMessages = messages; }, [messages]);
+  useEffect(() => { persistedInput = input; }, [input]);
+
+  const [backend] = useAppConfigurationValue<string>(AppSetting.AGENT_BACKEND);
   const [apiEndpoint] = useAppConfigurationValue<string>(AppSetting.AGENT_API_ENDPOINT);
   const [apiKey] = useAppConfigurationValue<string>(AppSetting.AGENT_API_KEY);
   const [model] = useAppConfigurationValue<string>(AppSetting.AGENT_MODEL);
+  const [webllmModel] = useAppConfigurationValue<string>(AppSetting.AGENT_WEBLLM_MODEL);
+  const [webllmStatus, setWebllmStatus] = useState<WebLLMStatus>(getWebLLMStatus);
+
+  useEffect(() => {
+    return subscribeWebLLMStatus(setWebllmStatus);
+  }, []);
 
   const topics = useMessagePipeline(selectTopics);
   const datatypes = useMessagePipeline(selectDatatypes);
@@ -199,7 +216,10 @@ export default function AgentChat(): ReactElement {
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed || loading) return;
-    if (!apiEndpoint || !apiKey || !model) return;
+
+    const isRemote = backend !== "webllm";
+    if (isRemote && (!apiEndpoint || !apiKey || !model)) return;
+    if (!isRemote && !webllmModel) return;
 
     const userMessage: ChatMessage = { role: "user", content: trimmed };
     const systemMessage: ChatMessage = {
@@ -213,17 +233,22 @@ export default function AgentChat(): ReactElement {
     setLoading(true);
 
     try {
+      let completionProvider;
+      if (isRemote) {
+        completionProvider = createRemoteProvider(fetch, apiEndpoint!, apiKey!, model!);
+      } else {
+        const engine = await initWebLLMEngine(webllmModel!);
+        completionProvider = createWebLLMProvider(engine);
+      }
+
       const conversationWithSystem = [systemMessage, ...updatedMessages];
       const executeTool = createToolExecutor(studioContext);
 
       const result = await runAgentLoop({
         messages: conversationWithSystem,
         tools: TOOL_DEFINITIONS,
-        fetchFn: fetch,
+        completionProvider,
         executeTool,
-        apiEndpoint,
-        apiKey,
-        model,
       });
 
       // Strip system message from stored conversation
@@ -239,17 +264,18 @@ export default function AgentChat(): ReactElement {
       setLoading(false);
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [input, loading, apiEndpoint, apiKey, model, messages, panelTypes, studioContext]);
+  }, [input, loading, backend, apiEndpoint, apiKey, model, webllmModel, messages, panelTypes, studioContext]);
 
-  const configured = apiEndpoint && apiKey && model;
+  const isRemote = backend !== "webllm";
+  const configured = isRemote ? apiEndpoint && apiKey && model : !!webllmModel;
 
   if (!configured) {
     return (
       <div className={classes.placeholder}>
         <Typography variant="body2" color="text.secondary">
-          Configure the Agent in Settings &gt; General to get started.
-          <br />
-          Set API endpoint, key, and model name.
+          {isRemote
+            ? "Configure the Agent in Settings \u203A General to get started. Set API endpoint, key, and model name."
+            : "Select a WebLLM model in Settings \u203A General to get started."}
         </Typography>
       </div>
     );
@@ -285,11 +311,26 @@ export default function AgentChat(): ReactElement {
           ),
         )}
         {loading && (
-          <Stack direction="row" alignItems="center" gap={1} paddingX={1}>
-            <CircularProgress size={16} />
-            <Typography variant="caption" color="text.secondary">
-              Thinking...
-            </Typography>
+          <Stack gap={0.5} paddingX={1}>
+            {webllmStatus.state === "loading" && (
+              <>
+                <LinearProgress
+                  variant={webllmStatus.progress != undefined ? "determinate" : "indeterminate"}
+                  value={(webllmStatus.progress ?? 0) * 100}
+                />
+                <Typography variant="caption" color="text.secondary">
+                  {webllmStatus.text ?? "Loading model..."}
+                </Typography>
+              </>
+            )}
+            {webllmStatus.state !== "loading" && (
+              <Stack direction="row" alignItems="center" gap={1}>
+                <CircularProgress size={16} />
+                <Typography variant="caption" color="text.secondary">
+                  Thinking...
+                </Typography>
+              </Stack>
+            )}
           </Stack>
         )}
         <div ref={messagesEndRef} />
