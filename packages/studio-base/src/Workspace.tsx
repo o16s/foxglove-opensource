@@ -18,6 +18,7 @@ import { makeStyles } from "tss-react/mui";
 
 import Logger from "@foxglove/log";
 import { AppSetting } from "@foxglove/studio-base/AppSetting";
+import { extractFilesFromZip } from "@foxglove/studio-base/util/extractZip";
 import { AppBarProps, AppBar } from "@foxglove/studio-base/components/AppBar";
 import { CustomWindowControlsProps } from "@foxglove/studio-base/components/AppBar/CustomWindowControls";
 import {
@@ -135,7 +136,7 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
 
   // file types we support for drag/drop
   const allowedDropExtensions = useMemo(() => {
-    const extensions = [".foxe"];
+    const extensions = [".foxe", ".zip"];
     for (const source of availableSources) {
       if (source.type === "file" && source.supportedFileTypes) {
         extensions.push(...source.supportedFileTypes);
@@ -184,46 +185,30 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
 
   const installExtension = useExtensionCatalog((state) => state.installExtension);
 
-  const openHandle = useCallback(
-    async (
-      handle: FileSystemFileHandle /* foxglove-depcheck-used: @types/wicg-file-system-access */,
-    ) => {
-      log.debug("open handle", handle);
-      const file = await handle.getFile();
-
-      if (file.name.endsWith(".foxe")) {
-        // Extension installation
-        try {
-          const arrayBuffer = await file.arrayBuffer();
-          const data = new Uint8Array(arrayBuffer);
-          const extension = await installExtension("local", data);
-          enqueueSnackbar(`Installed extension ${extension.id}`, { variant: "success" });
-        } catch (err) {
-          log.error(err);
-          enqueueSnackbar(`Failed to install extension ${file.name}: ${err.message}`, {
-            variant: "error",
-          });
-        }
-      }
-
-      // Look for a source that supports the file extensions
-      const matchedSource = availableSources.find((source) => {
-        const ext = extname(file.name);
-        return source.supportedFileTypes?.includes(ext);
-      });
-      if (matchedSource) {
-        selectSource(matchedSource.id, { type: "file", handle });
-      }
-    },
-    [availableSources, enqueueSnackbar, installExtension, selectSource],
-  );
-
   const openFiles = useCallback(
     async (files: File[]) => {
       const otherFiles: File[] = [];
       log.debug("open files", files);
 
+      // Extract ZIP files first, replacing them with their contents
+      const expandedFiles: File[] = [];
       for (const file of files) {
+        if (extname(file.name) === ".zip") {
+          try {
+            const extracted = await extractFilesFromZip(file);
+            expandedFiles.push(...extracted);
+          } catch (err) {
+            log.error(err);
+            enqueueSnackbar(`Failed to extract ZIP ${file.name}: ${err instanceof Error ? err.message : String(err)}`, {
+              variant: "error",
+            });
+          }
+        } else {
+          expandedFiles.push(file);
+        }
+      }
+
+      for (const file of expandedFiles) {
         if (file.name.endsWith(".foxe")) {
           // Extension installation
           try {
@@ -259,6 +244,58 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
       }
     },
     [availableSources, enqueueSnackbar, installExtension, selectSource],
+  );
+
+  const openHandle = useCallback(
+    async (
+      handle: FileSystemFileHandle /* foxglove-depcheck-used: @types/wicg-file-system-access */,
+    ) => {
+      log.debug("open handle", handle);
+      const file = await handle.getFile();
+
+      // ZIP files: extract and open the inner files
+      if (extname(file.name) === ".zip") {
+        try {
+          const extracted = await extractFilesFromZip(file);
+          if (extracted.length === 0) {
+            enqueueSnackbar("ZIP file contains no supported files.", { variant: "warning" });
+            return;
+          }
+          await openFiles(extracted);
+        } catch (err) {
+          log.error(err);
+          enqueueSnackbar(`Failed to extract ZIP: ${err instanceof Error ? err.message : String(err)}`, {
+            variant: "error",
+          });
+        }
+        return;
+      }
+
+      if (file.name.endsWith(".foxe")) {
+        // Extension installation
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const data = new Uint8Array(arrayBuffer);
+          const extension = await installExtension("local", data);
+          enqueueSnackbar(`Installed extension ${extension.id}`, { variant: "success" });
+        } catch (err) {
+          log.error(err);
+          enqueueSnackbar(`Failed to install extension ${file.name}: ${err.message}`, {
+            variant: "error",
+          });
+        }
+      }
+
+      // Look for a source that supports the file extensions
+      const matchedSource = availableSources.find((source) => {
+        const ext = extname(file.name);
+        return source.supportedFileTypes?.includes(ext);
+      });
+      if (matchedSource) {
+        selectSource(matchedSource.id, { type: "file", handle });
+      }
+    },
+    [availableSources, enqueueSnackbar, installExtension, openFiles, selectSource],
   );
 
   // files the main thread told us to open

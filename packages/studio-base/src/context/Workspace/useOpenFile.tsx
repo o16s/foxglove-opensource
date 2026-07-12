@@ -9,19 +9,22 @@ import {
   IDataSourceFactory,
   usePlayerSelection,
 } from "@foxglove/studio-base/context/PlayerSelectionContext";
+import { extractFilesFromZip } from "@foxglove/studio-base/util/extractZip";
 import showOpenFilePicker from "@foxglove/studio-base/util/showOpenFilePicker";
 
 export function useOpenFile(sources: readonly IDataSourceFactory[]): () => Promise<void> {
   const { selectSource } = usePlayerSelection();
 
   const allExtensions = useMemo(() => {
-    return sources.reduce<string[]>((all, source) => {
+    const exts = sources.reduce<string[]>((all, source) => {
       if (!source.supportedFileTypes) {
         return all;
       }
 
       return [...all, ...source.supportedFileTypes];
     }, []);
+    exts.push(".zip");
+    return exts;
   }, [sources]);
 
   return useCallback(async () => {
@@ -38,7 +41,24 @@ export function useOpenFile(sources: readonly IDataSourceFactory[]): () => Promi
       return;
     }
 
-    const files = await Promise.all(fileHandles.map((h) => h.getFile()));
+    let files = await Promise.all(fileHandles.map((h) => h.getFile()));
+
+    // Extract ZIP files, replacing them with their contents
+    const expanded: File[] = [];
+    for (const file of files) {
+      if (path.extname(file.name) === ".zip") {
+        const extracted = await extractFilesFromZip(file);
+        expanded.push(...extracted);
+      } else {
+        expanded.push(file);
+      }
+    }
+    files = expanded;
+
+    if (files.length === 0) {
+      return;
+    }
+
     const firstFile = files[0]!;
 
     // Find the first _file_ source which can load our extension
@@ -60,10 +80,6 @@ export function useOpenFile(sources: readonly IDataSourceFactory[]): () => Promi
       throw new Error(`Cannot find source to handle ${firstFile.name}`);
     }
 
-    if (files.length === 1) {
-      selectSource(foundSource.id, { type: "file", handle: fileHandles[0] });
-    } else {
-      selectSource(foundSource.id, { type: "file", files });
-    }
+    selectSource(foundSource.id, { type: "file", files });
   }, [allExtensions, selectSource, sources]);
 }
