@@ -74,6 +74,7 @@ const useStyles = makeStyles()((theme) => ({
     width: "100%",
     height: 5,
     backgroundColor: theme.palette.action.hover,
+    cursor: "pointer",
   },
   sourceRangeBar: {
     position: "absolute",
@@ -82,7 +83,7 @@ const useStyles = makeStyles()((theme) => ({
     borderRadius: 0,
     backgroundColor: theme.palette.text.primary,
     opacity: 0.12,
-    cursor: "default",
+    cursor: "pointer",
     "&:hover": {
       opacity: 0.25,
     },
@@ -278,7 +279,15 @@ export default function Scrubber(props: Props): JSX.Element {
       {hasSourceRanges && sourceRanges != undefined && startTime != undefined && (
         <>
           {Array.from({ length: sourceLanes.laneCount }, (_, lane) => (
-            <div key={lane} className={classes.sourceRangesLane}>
+            <div
+              key={lane}
+              className={classes.sourceRangesLane}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const fraction = (e.clientX - rect.left) / rect.width;
+                onChange(Math.max(0, Math.min(1, fraction)));
+              }}
+            >
               {sourceRanges.map((sr, i) => {
                 if (sourceLanes.laneMap.get(i) !== lane) {
                   return undefined;
