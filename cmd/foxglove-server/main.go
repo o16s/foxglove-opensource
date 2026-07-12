@@ -332,6 +332,10 @@ func main() {
 			return
 		}
 
+		// Support absolute paths by stripping the mcap directory prefix
+		relPath = strings.TrimPrefix(relPath, absPath)
+		relPath = strings.TrimPrefix(relPath, "/")
+
 		// Prevent directory traversal
 		cleanPath := filepath.Clean(relPath)
 		if strings.Contains(cleanPath, "..") {
