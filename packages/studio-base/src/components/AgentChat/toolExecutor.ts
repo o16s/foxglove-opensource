@@ -4,7 +4,7 @@
 
 import { MosaicNode } from "react-mosaic-component";
 
-import { Time, fromSec, toSec } from "@foxglove/rostime";
+import { Time, add as addTimes, fromSec, subtract as subtractTimes, toSec } from "@foxglove/rostime";
 import { Immutable, MessageEvent } from "@foxglove/studio";
 import { AddPanelPayload, ChangePanelLayoutPayload, SaveConfigsPayload } from "@foxglove/studio-base/context/CurrentLayoutContext/actions";
 import { DataSourceArgs } from "@foxglove/studio-base/context/PlayerSelectionContext";
@@ -37,6 +37,7 @@ export type StudioContext = {
   selectSource: (sourceId: string, args?: DataSourceArgs) => void;
   getBlockMessages: (topic: string) => MessageEvent[];
   incidents: Incident[];
+  startTime: Time | undefined;
 };
 
 export type ToolExecutorFn = (name: string, args: Record<string, unknown>) => Promise<string>;
@@ -86,12 +87,16 @@ function getNestedValue(obj: unknown, path: string): unknown {
 function extractFieldValues(
   messages: MessageEvent[],
   field: string,
+  startTime: Time | undefined,
 ): Array<{ time: number; value: number }> {
   const results: Array<{ time: number; value: number }> = [];
   for (const msg of messages) {
     const val = getNestedValue(msg.message, field);
     if (typeof val === "number") {
-      results.push({ time: toSec(msg.receiveTime), value: val });
+      const elapsed = startTime
+        ? toSec(subtractTimes(msg.receiveTime, startTime))
+        : toSec(msg.receiveTime);
+      results.push({ time: elapsed, value: val });
     }
   }
   return results;
@@ -187,9 +192,12 @@ export function createToolExecutor(
       if (!ctx.seekPlayback) {
         return "Seek is not available — no active playback source.";
       }
-      const timeSec = args.time as number;
-      ctx.seekPlayback(fromSec(timeSec));
-      return `Seeked to ${timeSec}s`;
+      const elapsedSec = args.time as number;
+      const absoluteTime = ctx.startTime
+        ? addTimes(ctx.startTime, fromSec(elapsedSec))
+        : fromSec(elapsedSec);
+      ctx.seekPlayback(absoluteTime);
+      return `Seeked to ${elapsedSec}s`;
     },
 
     get_incidents: async (): Promise<string> => {
@@ -202,7 +210,7 @@ export function createToolExecutor(
       const limit = (args.limit as number | undefined) ?? 5000;
 
       const messages = ctx.getBlockMessages(topic);
-      const values = extractFieldValues(messages, field);
+      const values = extractFieldValues(messages, field, ctx.startTime);
       return JSON.stringify(downsample(values, limit)) as string;
     },
 
@@ -211,7 +219,7 @@ export function createToolExecutor(
       const field = args.field as string;
 
       const messages = ctx.getBlockMessages(topic);
-      const values = extractFieldValues(messages, field);
+      const values = extractFieldValues(messages, field, ctx.startTime);
 
       if (values.length === 0) {
         return "No data found for this topic/field.";
@@ -249,7 +257,7 @@ export function createToolExecutor(
       const field = args.field as string;
 
       const messages = ctx.getBlockMessages(topic);
-      const values = extractFieldValues(messages, field);
+      const values = extractFieldValues(messages, field, ctx.startTime);
 
       if (values.length === 0) {
         return "[]";

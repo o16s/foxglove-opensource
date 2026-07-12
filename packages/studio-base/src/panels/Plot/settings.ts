@@ -14,7 +14,7 @@ import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/Pane
 import { SaveConfig } from "@foxglove/studio-base/types/panels";
 import { lineColors } from "@foxglove/studio-base/util/plotColors";
 
-import { PlotPath, PlotConfig, plotPathDisplayName } from "./config";
+import { PlotAnnotation, PlotPath, PlotConfig, plotPathDisplayName } from "./config";
 import { plotableRosTypes } from "./plotableRosTypes";
 
 export const DEFAULT_PATH: PlotPath = Object.freeze({
@@ -105,6 +105,68 @@ const makeRootSeriesNode = memoizeWeak(
           label: t("addSeries"),
           display: "inline",
           icon: "Addchart",
+        },
+      ],
+    };
+  },
+);
+
+const makeAnnotationNode = memoizeWeak(
+  (annotation: PlotAnnotation, index: number): SettingsTreeNode => {
+    return {
+      actions: [
+        {
+          type: "action",
+          id: "delete-annotation",
+          label: "Delete",
+          display: "inline",
+          icon: "Clear",
+        },
+      ],
+      label: annotation.label || `Annotation ${index + 1}`,
+      visible: annotation.enabled !== false,
+      fields: {
+        label: {
+          input: "string",
+          label: "Label",
+          value: annotation.label,
+        },
+        startTime: {
+          input: "number",
+          label: "Start (s)",
+          value: annotation.startTime,
+        },
+        endTime: {
+          input: "number",
+          label: "End (s)",
+          value: annotation.endTime,
+        },
+        color: {
+          input: "rgb",
+          label: "Color",
+          value: annotation.color ?? "#FF9800",
+        },
+      },
+    };
+  },
+);
+
+const makeAnnotationsNode = memoizeWeak(
+  (annotations: PlotAnnotation[]): SettingsTreeNode => {
+    const children = Object.fromEntries(
+      annotations.map((ann, index) => [`${index}`, makeAnnotationNode(ann, index)]),
+    );
+    return {
+      label: "Annotations",
+      defaultExpansionState: "collapsed",
+      children,
+      actions: [
+        {
+          type: "action",
+          id: "add-annotation",
+          label: "Add annotation",
+          display: "inline",
+          icon: "Add",
         },
       ],
     };
@@ -229,6 +291,7 @@ function buildSettingsTree(config: PlotConfig, t: TFunction<"plot">): SettingsTr
       },
     },
     paths: makeRootSeriesNode(config.paths, t),
+    annotations: makeAnnotationsNode(config.annotations ?? []),
   };
 }
 
@@ -246,7 +309,19 @@ export function usePlotPanelSettings(
         const { path, value } = action.payload;
         saveConfig(
           produce((draft) => {
-            if (path[0] === "paths") {
+            if (path[0] === "annotations") {
+              if (!draft.annotations) {
+                draft.annotations = [];
+              }
+              if (path[2] === "visible") {
+                const idx = Number(path[1]);
+                if (draft.annotations[idx]) {
+                  draft.annotations[idx]!.enabled = value as boolean;
+                }
+              } else {
+                _.set(draft, path, value);
+              }
+            } else if (path[0] === "paths") {
               if (draft.paths.length === 0) {
                 draft.paths.push({ ...DEFAULT_PATH });
               }
@@ -288,6 +363,28 @@ export function usePlotPanelSettings(
           saveConfig(
             produce<PlotConfig>((draft) => {
               draft.paths.splice(Number(index), 1);
+            }),
+          );
+        } else if (action.payload.id === "add-annotation") {
+          saveConfig(
+            produce<PlotConfig>((draft) => {
+              if (!draft.annotations) {
+                draft.annotations = [];
+              }
+              draft.annotations.push({
+                startTime: 0,
+                endTime: 10,
+                label: `Annotation ${draft.annotations.length + 1}`,
+                color: "#FF9800",
+                enabled: true,
+              });
+            }),
+          );
+        } else if (action.payload.id === "delete-annotation") {
+          const index = action.payload.path[1];
+          saveConfig(
+            produce<PlotConfig>((draft) => {
+              draft.annotations?.splice(Number(index), 1);
             }),
           );
         }

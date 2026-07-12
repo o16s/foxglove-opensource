@@ -10,9 +10,28 @@ function escapeHtml(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function parseTable(lines: string[]): string {
+  // lines[0] = header row, lines[1] = separator, lines[2..] = data rows
+  const headerCells = lines[0]!
+    .split("|")
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+  const headerRow = headerCells.map((c) => `<th>${c}</th>`).join("");
+
+  const bodyRows = lines.slice(2).map((line) => {
+    const cells = line
+      .split("|")
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+    return `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`;
+  });
+
+  return `<table><thead><tr>${headerRow}</tr></thead><tbody>${bodyRows.join("")}</tbody></table>`;
+}
+
 /**
  * Minimal markdown-to-HTML converter. Handles bold, italic, inline code,
- * code blocks, and newlines. Escapes HTML to prevent XSS.
+ * code blocks, tables, lists, and newlines. Escapes HTML to prevent XSS.
  */
 export function parseMarkdown(input: string): string {
   // First escape HTML
@@ -22,6 +41,45 @@ export function parseMarkdown(input: string): string {
   text = text.replace(/```\n?([\s\S]*?)```/g, (_match, code: string) => {
     return `<pre><code>${code.replace(/\n$/, "")}</code></pre>`;
   });
+
+  // Parse tables and lists line-by-line (must come before newline→<br> conversion)
+  const lines = text.split("\n");
+  const outputLines: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    // Detect table: current line has |, next line is separator (|---|)
+    if (
+      i + 1 < lines.length &&
+      lines[i]!.includes("|") &&
+      /^\|?[\s-:|]+\|[\s-:|]+\|?$/.test(lines[i + 1]!)
+    ) {
+      const tableLines: string[] = [lines[i]!, lines[i + 1]!];
+      i += 2;
+      while (i < lines.length && lines[i]!.includes("|") && lines[i]!.trim().length > 0) {
+        tableLines.push(lines[i]!);
+        i++;
+      }
+      outputLines.push(parseTable(tableLines));
+      continue;
+    }
+
+    // Detect unordered list items (- item or * item)
+    if (/^[\s]*[-*]\s/.test(lines[i]!)) {
+      const listItems: string[] = [];
+      while (i < lines.length && /^[\s]*[-*]\s/.test(lines[i]!)) {
+        listItems.push(lines[i]!.replace(/^[\s]*[-*]\s/, ""));
+        i++;
+      }
+      outputLines.push(`<ul>${listItems.map((li) => `<li>${li}</li>`).join("")}</ul>`);
+      continue;
+    }
+
+    outputLines.push(lines[i]!);
+    i++;
+  }
+
+  text = outputLines.join("\n");
 
   // Inline code (`...`)
   text = text.replace(/`([^`]+)`/g, "<code>$1</code>");

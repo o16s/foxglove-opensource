@@ -62,6 +62,10 @@ When the session was opened with URL incident parameters, use get_incidents firs
 
 If no incidents are present, skip this step.
 
+## Time Convention
+
+All timestamps in data analysis tools use **elapsed seconds** from the recording start — the same as the X-axis on Plot panels and the progress bar. When presenting times to the user, use formats like "at 12.5s" or "between 100s and 200s", NOT raw unix timestamps. The tools handle conversion internally.
+
 ## Data Analysis Workflow
 
 When the user asks about data values, statistics, or anomalies:
@@ -69,7 +73,7 @@ When the user asks about data values, statistics, or anomalies:
 1. Use read_field_values to get time-series data for a specific topic and field
 2. Use get_statistics to compute summary statistics (min, max, mean, stddev, count)
 3. Use find_peaks to locate outliers or peaks — provide either an absolute threshold or a stddev multiplier
-4. Use seek_to_time to jump playback to an interesting timestamp
+4. Use seek_to_time to jump playback to a specific elapsed time
 5. Use annotate_plot to highlight time ranges on a Plot panel
 
 Data analysis tools read from the block loader cache (pre-loaded MCAP data). They do NOT work with live WebSocket streams.

@@ -77,6 +77,7 @@ export type PlotAnnotation = {
   endTime: number;
   label: string;
   color?: string;
+  enabled?: boolean;
 };
 
 export type PlotConfig = DeprecatedPlotConfig & {

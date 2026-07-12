@@ -23,6 +23,7 @@ describe("createToolExecutor", () => {
     selectSource: jest.fn(),
     getBlockMessages: jest.fn().mockReturnValue([]),
     incidents: [],
+    startTime: { sec: 0, nsec: 0 },
     ...overrides,
   });
 
@@ -216,15 +217,16 @@ describe("createToolExecutor", () => {
 
   // --- seek_to_time ---
 
-  it("seek_to_time calls seekPlayback with correct Time", async () => {
+  it("seek_to_time converts elapsed seconds to absolute time", async () => {
     const seekPlayback = jest.fn();
-    const ctx = makeContext({ seekPlayback });
+    const ctx = makeContext({ seekPlayback, startTime: { sec: 1000, nsec: 0 } });
     const execute = createToolExecutor(ctx);
 
-    await execute("seek_to_time", { time: 1625000000.5 });
+    await execute("seek_to_time", { time: 5.5 });
 
     expect(seekPlayback).toHaveBeenCalledTimes(1);
-    expect(seekPlayback).toHaveBeenCalledWith({ sec: 1625000000, nsec: 500000000 });
+    // 1000 + 5.5 = 1005.5 → { sec: 1005, nsec: 500000000 }
+    expect(seekPlayback).toHaveBeenCalledWith({ sec: 1005, nsec: 500000000 });
   });
 
   it("seek_to_time returns error when seekPlayback is unavailable", async () => {
@@ -270,6 +272,24 @@ describe("createToolExecutor", () => {
     const parsed = JSON.parse(result) as Array<{ time: number; value: number }>;
 
     expect(parsed.length).toBeLessThanOrEqual(10);
+  });
+
+  it("read_field_values returns elapsed time relative to recording start", async () => {
+    const messages: MessageEvent[] = [
+      { topic: "/s", schemaName: "S", receiveTime: { sec: 1000, nsec: 0 }, message: { v: 1 }, sizeInBytes: 10 },
+      { topic: "/s", schemaName: "S", receiveTime: { sec: 1005, nsec: 0 }, message: { v: 2 }, sizeInBytes: 10 },
+    ];
+    const ctx = makeContext({
+      getBlockMessages: jest.fn().mockReturnValue(messages),
+      startTime: { sec: 1000, nsec: 0 },
+    });
+    const execute = createToolExecutor(ctx);
+
+    const result = await execute("read_field_values", { topic: "/s", field: "v" });
+    const parsed = JSON.parse(result) as Array<{ time: number; value: number }>;
+
+    expect(parsed[0]!.time).toBe(0);
+    expect(parsed[1]!.time).toBe(5);
   });
 
   it("read_field_values returns empty array for no messages", async () => {

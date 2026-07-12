@@ -232,6 +232,19 @@ export class PlotCoordinator extends EventEmitter<EventTypes> {
     this.#updateAction.showYAxisLabels = config.showYAxisLabels;
     this.#updateAction.referenceLines = referenceLines;
 
+    if (config.annotations && config.annotations.length > 0) {
+      this.#updateAction.boxAnnotations = config.annotations
+        .filter((a) => a.enabled !== false)
+        .map((a) => ({
+          xMin: a.startTime,
+          xMax: a.endTime,
+          label: a.label,
+          color: a.color ?? "#FF9800",
+        }));
+    } else {
+      this.#updateAction.boxAnnotations = [];
+    }
+
     if (configYBoundsChanged) {
       // Config changes to yBounds always takes precedence over user interaction changes like pan/zoom
       this.#updateAction.yBounds = this.#configBounds.y;

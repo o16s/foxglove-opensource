@@ -36,4 +36,48 @@ describe("parseMarkdown", () => {
     expect(parseMarkdown("<script>alert(1)</script>")).not.toContain("<script>");
     expect(parseMarkdown("<script>alert(1)</script>")).toContain("&lt;script&gt;");
   });
+
+  it("renders a markdown table as an HTML table", () => {
+    const input = [
+      "| Name | Value |",
+      "|------|-------|",
+      "| foo  | 1     |",
+      "| bar  | 2     |",
+    ].join("\n");
+
+    const result = parseMarkdown(input);
+    expect(result).toContain("<table>");
+    expect(result).toContain("<th>");
+    expect(result).toContain("Name");
+    expect(result).toContain("<td>");
+    expect(result).toContain("foo");
+    expect(result).toContain("bar");
+  });
+
+  it("renders a table with surrounding text", () => {
+    const input = [
+      "Here are the results:",
+      "",
+      "| Peak | Time |",
+      "|------|------|",
+      "| 1    | 10s  |",
+      "",
+      "Done.",
+    ].join("\n");
+
+    const result = parseMarkdown(input);
+    expect(result).toContain("Here are the results:");
+    expect(result).toContain("<table>");
+    expect(result).toContain("Peak");
+    expect(result).toContain("10s");
+    expect(result).toContain("Done.");
+  });
+
+  it("converts unordered list items to HTML list", () => {
+    const input = "Options:\n- item one\n- item two\n- item three";
+    const result = parseMarkdown(input);
+    expect(result).toContain("<ul>");
+    expect(result).toContain("<li>");
+    expect(result).toContain("item one");
+  });
 });

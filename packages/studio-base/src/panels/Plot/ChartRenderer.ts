@@ -69,6 +69,7 @@ export type UpdateAction = {
   yBounds?: Partial<Bounds1D>;
   zoomMode?: "x" | "y" | "xy";
   referenceLines?: { color: string; value: number }[];
+  boxAnnotations?: { xMin: number; xMax: number; label: string; color: string }[];
   interactionEvents?: InteractionEvent[];
 };
 
@@ -304,6 +305,33 @@ export class ChartRenderer {
       });
 
       annotation.annotations = newAnnotations;
+    }
+
+    if (action.boxAnnotations) {
+      const annotation = this.#chartInstance.options.plugins?.annotation;
+      if (annotation) {
+        const existing = (annotation.annotations as AnnotationOptions[] | undefined) ?? [];
+        const boxes: AnnotationOptions[] = action.boxAnnotations.map((box, i) => ({
+          type: "box" as const,
+          display: true,
+          drawTime: "beforeDatasetsDraw",
+          xMin: box.xMin,
+          xMax: box.xMax,
+          xScaleID: "x",
+          backgroundColor: box.color + "30", // 30 = ~19% opacity hex suffix
+          borderColor: box.color,
+          borderWidth: 1,
+          label: {
+            display: true,
+            content: box.label,
+            position: "start" as const,
+            font: { size: 10 },
+            color: box.color,
+          },
+          id: `box-${i}`,
+        }));
+        annotation.annotations = [...existing, ...boxes];
+      }
     }
 
     // NOTE: "none" disables animations - this is important for chart performance because we update

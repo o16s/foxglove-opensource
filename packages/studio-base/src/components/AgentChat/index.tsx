@@ -63,6 +63,24 @@ const useStyles = makeStyles()((theme) => ({
   assistantBubble: {
     alignSelf: "flex-start",
     backgroundColor: theme.palette.action.hover,
+    "& table": {
+      borderCollapse: "collapse",
+      margin: theme.spacing(0.5, 0),
+      fontSize: "0.8rem",
+    },
+    "& th, & td": {
+      border: `1px solid ${theme.palette.divider}`,
+      padding: theme.spacing(0.25, 0.75),
+      textAlign: "left",
+    },
+    "& th": {
+      fontWeight: 600,
+      backgroundColor: theme.palette.action.selected,
+    },
+    "& ul": {
+      margin: theme.spacing(0.5, 0),
+      paddingLeft: theme.spacing(2),
+    },
   },
   assistantRow: {
     display: "flex",
@@ -95,6 +113,8 @@ const selectDatatypes = (ctx: MessagePipelineContext) => ctx.datatypes;
 const selectSeekPlayback = (ctx: MessagePipelineContext) => ctx.seekPlayback;
 const selectBlocks = (ctx: MessagePipelineContext) =>
   ctx.playerState.progress?.messageCache?.blocks;
+const selectStartTime = (ctx: MessagePipelineContext) =>
+  ctx.playerState.activeData?.startTime;
 
 
 export default function AgentChat(): ReactElement {
@@ -112,6 +132,7 @@ export default function AgentChat(): ReactElement {
   const datatypes = useMessagePipeline(selectDatatypes);
   const seekPlayback = useMessagePipeline(selectSeekPlayback);
   const blocks = useMessagePipeline(selectBlocks);
+  const startTime = useMessagePipeline(selectStartTime);
   const panelCatalog = usePanelCatalog();
   const { selectSource } = usePlayerSelection();
   const { addPanel, changePanelLayout, savePanelConfigs, getCurrentLayoutState } =
@@ -171,8 +192,9 @@ export default function AgentChat(): ReactElement {
       selectSource,
       getBlockMessages,
       incidents,
+      startTime,
     };
-  }, [topics, datatypes, panelTypes, getCurrentLayoutState, addPanel, changePanelLayout, savePanelConfigs, seekPlayback, selectSource, getBlockMessages, incidents]);
+  }, [topics, datatypes, panelTypes, getCurrentLayoutState, addPanel, changePanelLayout, savePanelConfigs, seekPlayback, selectSource, getBlockMessages, incidents, startTime]);
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
