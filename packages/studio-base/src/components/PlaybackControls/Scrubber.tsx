@@ -191,6 +191,7 @@ export default function Scrubber(props: Props): JSX.Element {
   const loading = presence === PlayerPresence.INITIALIZING || presence === PlayerPresence.BUFFERING;
 
   const popperRef = React.useRef<Instance>(ReactNull);
+  const outerContainerRef = React.useRef<HTMLDivElement>(ReactNull);
 
   const isHovered = hoverInfo != undefined;
   const popperProps: Partial<PopperProps> = useMemo(
@@ -214,9 +215,12 @@ export default function Scrubber(props: Props): JSX.Element {
       ],
       anchorEl: {
         getBoundingClientRect: () => {
+          // Anchor tooltip at the top of the seeker line (top of outerContainer)
+          // instead of at the mouse cursor, so it doesn't obscure source range bars.
+          const containerTop = outerContainerRef.current?.getBoundingClientRect().top ?? 0;
           return new DOMRect(
             latestHoverInfo.current?.clientX ?? 0,
-            latestHoverInfo.current?.clientY ?? 0,
+            containerTop,
             0,
             0,
           );
@@ -269,7 +273,7 @@ export default function Scrubber(props: Props): JSX.Element {
   const renderSliderForMultiSource = useCallback(() => undefined, []);
 
   return (
-    <div className={classes.outerContainer}>
+    <div ref={outerContainerRef} className={classes.outerContainer}>
       {/* Full-height cursor spanning source lanes + scrubber */}
       {hasSourceRanges && fraction != undefined && (
         <div className={classes.cursor} style={{ left: `${fraction * 100}%` }} />
