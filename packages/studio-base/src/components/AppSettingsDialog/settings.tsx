@@ -409,6 +409,9 @@ export function AgentSettings(): JSX.Element {
   const [webllmModel = "", setWebllmModel] = useAppConfigurationValue<string>(
     AppSetting.AGENT_WEBLLM_MODEL,
   );
+  const [ctxSize, setCtxSize] = useAppConfigurationValue<number>(
+    AppSetting.AGENT_WEBLLM_CTX_SIZE,
+  );
   const [ramTier, setRamTier] = useState<number>(8);
   const [webllmStatus, setWebllmStatus] = useState<
     { state: string; progress?: number; text?: string; error?: string }
@@ -526,6 +529,18 @@ export function AgentSettings(): JSX.Element {
                 {m.label}
               </MenuItem>
             ))}
+          </Select>
+          <Select
+            size="small"
+            value={ctxSize ?? 4096}
+            onChange={(e) => void setCtxSize(e.target.value as number)}
+            fullWidth
+          >
+            <MenuItem value={1024}>1K context</MenuItem>
+            <MenuItem value={2048}>2K context</MenuItem>
+            <MenuItem value={4096}>4K context (default)</MenuItem>
+            <MenuItem value={8192}>8K context</MenuItem>
+            <MenuItem value={16384}>16K context</MenuItem>
           </Select>
           {webllmStatus.state === "loading" && (
             <Stack gap={0.5}>

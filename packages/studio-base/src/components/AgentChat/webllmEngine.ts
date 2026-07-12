@@ -14,6 +14,7 @@ type EngineWithUnload = WebLLMEngine & { unload: () => void };
 
 let currentEngine: EngineWithUnload | undefined;
 let currentModelId: string | undefined;
+let currentContextSize: number | undefined;
 let currentStatus: WebLLMStatus = { state: "idle" };
 const listeners = new Set<(status: WebLLMStatus) => void>();
 
@@ -37,8 +38,11 @@ export function subscribeWebLLMStatus(
   };
 }
 
-export async function initWebLLMEngine(modelId: string): Promise<EngineWithUnload> {
-  if (currentEngine && currentModelId === modelId) {
+export async function initWebLLMEngine(
+  modelId: string,
+  contextSize?: number,
+): Promise<EngineWithUnload> {
+  if (currentEngine && currentModelId === modelId && currentContextSize === contextSize) {
     return currentEngine;
   }
 
@@ -46,20 +50,23 @@ export async function initWebLLMEngine(modelId: string): Promise<EngineWithUnloa
     currentEngine.unload();
     currentEngine = undefined;
     currentModelId = undefined;
+    currentContextSize = undefined;
   }
 
   setStatus({ state: "loading" });
 
   try {
     const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
+    const chatOpts = contextSize ? { context_window_size: contextSize } : undefined;
     const engine = (await CreateMLCEngine(modelId, {
       initProgressCallback: (progress: { text: string; progress: number }) => {
         setStatus({ state: "loading", progress: progress.progress, text: progress.text });
       },
-    })) as EngineWithUnload;
+    }, chatOpts)) as EngineWithUnload;
 
     currentEngine = engine;
     currentModelId = modelId;
+    currentContextSize = contextSize;
     setStatus({ state: "ready" });
     return engine;
   } catch (err) {
@@ -72,6 +79,7 @@ export async function initWebLLMEngine(modelId: string): Promise<EngineWithUnloa
 export function resetWebLLMEngine(): void {
   currentEngine = undefined;
   currentModelId = undefined;
+  currentContextSize = undefined;
   currentStatus = { state: "idle" };
   listeners.clear();
 }

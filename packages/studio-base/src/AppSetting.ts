@@ -29,6 +29,7 @@ export enum AppSetting {
   AGENT_API_KEY = "agent.apiKey",
   AGENT_MODEL = "agent.model",
   AGENT_WEBLLM_MODEL = "agent.webllm.model",
+  AGENT_WEBLLM_CTX_SIZE = "agent.webllm.contextSize",
 
   // Dev only
   ENABLE_LAYOUT_DEBUGGING = "enableLayoutDebugging",

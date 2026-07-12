@@ -139,6 +139,7 @@ export default function AgentChat(): ReactElement {
   const [apiKey] = useAppConfigurationValue<string>(AppSetting.AGENT_API_KEY);
   const [model] = useAppConfigurationValue<string>(AppSetting.AGENT_MODEL);
   const [webllmModel] = useAppConfigurationValue<string>(AppSetting.AGENT_WEBLLM_MODEL);
+  const [webllmCtxSize] = useAppConfigurationValue<number>(AppSetting.AGENT_WEBLLM_CTX_SIZE);
   const [webllmStatus, setWebllmStatus] = useState<WebLLMStatus>(getWebLLMStatus);
 
   useEffect(() => {
@@ -237,7 +238,7 @@ export default function AgentChat(): ReactElement {
       if (isRemote) {
         completionProvider = createRemoteProvider(fetch, apiEndpoint!, apiKey!, model!);
       } else {
-        const engine = await initWebLLMEngine(webllmModel!);
+        const engine = await initWebLLMEngine(webllmModel!, webllmCtxSize);
         completionProvider = createWebLLMProvider(engine);
       }
 
@@ -264,7 +265,7 @@ export default function AgentChat(): ReactElement {
       setLoading(false);
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [input, loading, backend, apiEndpoint, apiKey, model, webllmModel, messages, panelTypes, studioContext]);
+  }, [input, loading, backend, apiEndpoint, apiKey, model, webllmModel, webllmCtxSize, messages, panelTypes, studioContext]);
 
   const isRemote = backend !== "webllm";
   const configured = isRemote ? apiEndpoint && apiKey && model : !!webllmModel;
