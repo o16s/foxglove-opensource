@@ -163,6 +163,7 @@ export function Plot(props: Props): JSX.Element {
     x: number;
     y: number;
     data: TimeBasedChartTooltipData[];
+    cursorTime?: number;
   }>();
 
   usePlotPanelSettings(config, saveConfig, focusedPath);
@@ -409,13 +410,16 @@ export function Plot(props: Props): JSX.Element {
         return;
       }
 
+      const cursorTime = coordinator?.getXValueAtPixel(args.canvasX);
+
       setActiveTooltip({
         x: args.clientX,
         y: args.clientY,
         data: tooltipItems,
+        cursorTime,
       });
     });
-  }, [renderer, isMounted]);
+  }, [renderer, isMounted, coordinator]);
 
   // Extract the bounding client rect from currentTarget before calling the debounced function
   // because react re-uses the SyntheticEvent objects.
@@ -470,16 +474,36 @@ export function Plot(props: Props): JSX.Element {
   }, [config.paths]);
 
   const numSeries = config.paths.length;
+  const activeAnnotationLabels = useMemo(() => {
+    if (activeTooltip?.cursorTime == undefined || !config.annotations) {
+      return [];
+    }
+    const t = activeTooltip.cursorTime;
+    return config.annotations
+      .filter((a) => a.enabled !== false && t >= a.startTime && t <= a.endTime)
+      .map((a) => a.label);
+  }, [activeTooltip?.cursorTime, config.annotations]);
+
   const tooltipContent = useMemo(() => {
-    return activeTooltip ? (
-      <TimeBasedChartTooltipContent
-        content={activeTooltip.data}
-        multiDataset={numSeries > 1}
-        colorsByConfigIndex={colorsByDatasetIndex}
-        labelsByConfigIndex={labelsByDatasetIndex}
-      />
-    ) : undefined;
-  }, [activeTooltip, colorsByDatasetIndex, labelsByDatasetIndex, numSeries]);
+    if (!activeTooltip) {
+      return undefined;
+    }
+    return (
+      <>
+        <TimeBasedChartTooltipContent
+          content={activeTooltip.data}
+          multiDataset={numSeries > 1}
+          colorsByConfigIndex={colorsByDatasetIndex}
+          labelsByConfigIndex={labelsByDatasetIndex}
+        />
+        {activeAnnotationLabels.map((label, i) => (
+          <div key={i} style={{ opacity: 0.8, fontStyle: "italic", marginTop: 4 }}>
+            ⬥ {label}
+          </div>
+        ))}
+      </>
+    );
+  }, [activeTooltip, colorsByDatasetIndex, labelsByDatasetIndex, numSeries, activeAnnotationLabels]);
 
   // panning
   useEffect(() => {
