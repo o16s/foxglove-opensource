@@ -29,7 +29,7 @@ describe("useTopicListSearch", () => {
     const { result } = renderHook(() =>
       useTopicListSearch({ topics, datatypes, filterText: "xyz" }),
     );
-    expect(result.current.map(itemToString)).toEqual(["xyz", "abc", "abc.xyz"]);
+    expect(result.current.items.map(itemToString)).toEqual(["xyz", "abc", "abc.xyz"]);
   });
 
   it("sorts topics with matching schema names above matching paths", () => {
@@ -42,7 +42,7 @@ describe("useTopicListSearch", () => {
       ["XYZW", { definitions: [{ name: "abcd", type: "string" }] }],
     ]);
     const { result } = renderHook(() => useTopicListSearch({ topics, datatypes, filterText: "d" }));
-    expect(result.current.map(itemToString)).toEqual(["abc", "xyz", "xyz.abcd"]);
+    expect(result.current.items.map(itemToString)).toEqual(["abc", "xyz", "xyz.abcd"]);
   });
 
   it("sorts better matches to the top", () => {
@@ -57,7 +57,26 @@ describe("useTopicListSearch", () => {
     const { result } = renderHook(() =>
       useTopicListSearch({ topics, datatypes, filterText: "foobar" }),
     );
-    expect(result.current.map(itemToString)).toEqual(["xyz", "xyz.foobar", "footballer"]);
+    expect(result.current.items.map(itemToString)).toEqual(["xyz", "xyz.foobar", "footballer"]);
+  });
+
+  it("returns fieldsByTopic for expand/collapse", () => {
+    const topics: UseTopicListSearchParams["topics"] = [
+      { name: "/abc", schemaName: "ABCD" },
+      { name: "/empty", schemaName: undefined },
+    ];
+    const datatypes: UseTopicListSearchParams["datatypes"] = new Map([
+      ["ABCD", { definitions: [{ name: "x", type: "float64" }, { name: "y", type: "float64" }] }],
+    ]);
+    const { result } = renderHook(() =>
+      useTopicListSearch({ topics, datatypes, filterText: "" }),
+    );
+    const fields = result.current.fieldsByTopic.get("/abc");
+    expect(fields).toBeDefined();
+    expect(fields!.map(itemToString)).toEqual(["/abc.x", "/abc.y"]);
+
+    // Topic with no schema has no fields
+    expect(result.current.fieldsByTopic.get("/empty")).toBeUndefined();
   });
 
   it("includes topic matches when there's a trailing dot", () => {
@@ -73,6 +92,6 @@ describe("useTopicListSearch", () => {
     const { result } = renderHook(() =>
       useTopicListSearch({ topics, datatypes, filterText: "abc." }),
     );
-    expect(result.current.map(itemToString)).toEqual(["abc", "abc.xyz", "abc2", "abc2.xyz"]);
+    expect(result.current.items.map(itemToString)).toEqual(["abc", "abc.xyz", "abc2", "abc2.xyz"]);
   });
 });

@@ -26,6 +26,12 @@ export type TopicListItem =
   | { type: "topic"; item: FzfResultItem<Topic> }
   | { type: "schema"; item: FzfResultItem<MessagePathSearchItem> };
 
+export type UseTopicListSearchResult = {
+  items: TopicListItem[];
+  /** Pre-computed field items for each topic, keyed by topic name. Available for expand/collapse. */
+  fieldsByTopic: Map<string, TopicListItem[]>;
+};
+
 export type UseTopicListSearchParams = {
   topics: Immutable<Topic[]>;
   datatypes: Immutable<Map<string, MessageDefinition>>;
@@ -33,9 +39,10 @@ export type UseTopicListSearchParams = {
 };
 
 /**
- * Returns a filtered list of {@link TopicListItem}s based on the given filter text.
+ * Returns a filtered list of {@link TopicListItem}s based on the given filter text,
+ * plus a map of field items per topic for expand/collapse support.
  */
-export function useTopicListSearch(params: UseTopicListSearchParams): TopicListItem[] {
+export function useTopicListSearch(params: UseTopicListSearchParams): UseTopicListSearchResult {
   const { topics, datatypes, filterText } = params;
 
   const topicsAndSchemaNamesFzf = useMemo(
@@ -50,6 +57,20 @@ export function useTopicListSearch(params: UseTopicListSearchParams): TopicListI
     () => getMessagePathSearchItems(topics, datatypes),
     [topics, datatypes],
   );
+
+  const fieldsByTopic = useMemo(() => {
+    const result = new Map<string, TopicListItem[]>();
+    for (const [topicName, items] of messagePathSearchItems.itemsByTopicName) {
+      result.set(
+        topicName,
+        items.map((item) => ({
+          type: "schema" as const,
+          item: { item, score: 0, positions: new Set<number>(), start: 0, end: 0 },
+        })),
+      );
+    }
+    return result;
+  }, [messagePathSearchItems]);
   const messagePathsFzf = useMemo(
     () =>
       new Fzf(messagePathSearchItems.items, {
@@ -137,5 +158,5 @@ export function useTopicListSearch(params: UseTopicListSearchParams): TopicListI
     return results;
   }, [filteredTopics, messagePathResults]);
 
-  return treeItems;
+  return { items: treeItems, fieldsByTopic };
 }

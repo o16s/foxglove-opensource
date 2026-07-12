@@ -38,7 +38,7 @@ import { MessagePathSelectionProvider } from "@foxglove/studio-base/services/mes
 import { MessagePathRow } from "./MessagePathRow";
 import { TopicRow } from "./TopicRow";
 import { useMultiSelection } from "./useMultiSelection";
-import { TopicListItem, useTopicListSearch } from "./useTopicListSearch";
+import { TopicListItem, UseTopicListSearchResult, useTopicListSearch } from "./useTopicListSearch";
 
 const selectPlayerPresence = ({ playerState }: MessagePipelineContext) => playerState.presence;
 
@@ -98,12 +98,45 @@ export function TopicList(): JSX.Element {
   const { topics, datatypes } = useDataSourceInfo();
 
   const listRef = useRef<VariableSizeList>(ReactNull);
+  const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
 
-  const treeItems = useTopicListSearch({
+  const searchResult: UseTopicListSearchResult = useTopicListSearch({
     topics,
     datatypes,
     filterText: debouncedFilterText,
   });
+
+  // When search is active, use search results as-is (fields shown by search matching).
+  // When no search, inject expanded topic fields into the flat list.
+  const treeItems = useMemo(() => {
+    if (debouncedFilterText) {
+      return searchResult.items;
+    }
+    const items: TopicListItem[] = [];
+    for (const item of searchResult.items) {
+      items.push(item);
+      if (item.type === "topic" && expandedTopics.has(item.item.item.name)) {
+        const fields = searchResult.fieldsByTopic.get(item.item.item.name);
+        if (fields) {
+          items.push(...fields);
+        }
+      }
+    }
+    return items;
+  }, [debouncedFilterText, searchResult, expandedTopics]);
+
+  const toggleExpand = useCallback((topicName: string) => {
+    setExpandedTopics((prev) => {
+      const next = new Set(prev);
+      if (next.has(topicName)) {
+        next.delete(topicName);
+      } else {
+        next.add(topicName);
+      }
+      return next;
+    });
+  }, []);
+
   const { selectedIndexes, onSelect, getSelectedIndexes } = useMultiSelection(treeItems);
 
   const [contextMenuState, setContextMenuState] = useState<
@@ -142,11 +175,14 @@ export function TopicList(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    // Discard cached row heights when the filter results change
+    // Discard cached row heights when the filter results or expansion state changes
     listRef.current?.resetAfterIndex(0);
-  }, [treeItems]);
+  }, [treeItems, expandedTopics]);
 
-  const itemData = useMemo(() => ({ treeItems, selectedIndexes }), [selectedIndexes, treeItems]);
+  const itemData = useMemo(
+    () => ({ treeItems, selectedIndexes, expandedTopics, searchResult, debouncedFilterText, toggleExpand }),
+    [selectedIndexes, treeItems, expandedTopics, searchResult, debouncedFilterText, toggleExpand],
+  );
 
   const renderRow: React.FC<ListChildComponentProps<typeof itemData>> = useCallback(
     // `data` comes from the `itemData` we pass to the VariableSizeList below
@@ -162,7 +198,10 @@ export function TopicList(): JSX.Element {
         });
       };
       switch (treeItem.type) {
-        case "topic":
+        case "topic": {
+          const topicName = treeItem.item.item.name;
+          const hasFields = (data.searchResult.fieldsByTopic.get(topicName)?.length ?? 0) > 0;
+          const isSearching = data.debouncedFilterText.length > 0;
           return (
             <TopicRow
               style={style}
@@ -172,8 +211,14 @@ export function TopicList(): JSX.Element {
               onContextMenu={(event) => {
                 handleContextMenu(event, index);
               }}
+              expanded={data.expandedTopics.has(topicName)}
+              hasFields={!isSearching && hasFields}
+              onToggleExpand={() => {
+                data.toggleExpand(topicName);
+              }}
             />
           );
+        }
         case "schema":
           return (
             <MessagePathRow
