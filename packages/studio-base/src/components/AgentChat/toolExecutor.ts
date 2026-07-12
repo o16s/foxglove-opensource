@@ -456,7 +456,7 @@ export function createToolExecutor(
     get_panel_config: async (args): Promise<string> => {
       const panelId = args.panelId as string;
       const config = ctx.currentLayout.configById[panelId] ?? {};
-      return JSON.stringify(config, undefined, 2);
+      return JSON.stringify(config, undefined, 2) ?? "{}";
     },
 
     configure_panel: async (args): Promise<string> => {
