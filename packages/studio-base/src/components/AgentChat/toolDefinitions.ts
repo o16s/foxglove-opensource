@@ -123,4 +123,138 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
     },
   },
+
+  // --- Data Analysis Tools ---
+
+  {
+    type: "function",
+    function: {
+      name: "seek_to_time",
+      description:
+        "Jump playback to a specific timestamp. Time is in seconds (unix epoch or relative to recording start, depending on source).",
+      parameters: {
+        type: "object",
+        properties: {
+          time: { type: "number", description: "Time in seconds to seek to" },
+        },
+        required: ["time"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_field_values",
+      description:
+        "Read numeric values of a specific field from loaded MCAP data. Returns [{time, value}] pairs. Data is read from the block loader cache — only works with MCAP files, not live streams.",
+      parameters: {
+        type: "object",
+        properties: {
+          topic: { type: "string", description: "Exact topic name" },
+          field: { type: "string", description: "Dot-separated field path, e.g. 'linear_acceleration.x'" },
+          limit: { type: "number", description: "Max number of points to return (default 5000). Data is downsampled if exceeded." },
+        },
+        required: ["topic", "field"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_statistics",
+      description:
+        "Compute summary statistics (min, max, mean, stddev, count, startTime, endTime) for a numeric field from loaded MCAP data.",
+      parameters: {
+        type: "object",
+        properties: {
+          topic: { type: "string", description: "Exact topic name" },
+          field: { type: "string", description: "Dot-separated field path" },
+        },
+        required: ["topic", "field"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "find_peaks",
+      description:
+        "Find peak values (local maxima above a threshold) in a numeric field. Specify either an absolute threshold or a stddev multiplier (mean + N*stddev). Returns [{time, value}] sorted by value descending, max 50 results.",
+      parameters: {
+        type: "object",
+        properties: {
+          topic: { type: "string", description: "Exact topic name" },
+          field: { type: "string", description: "Dot-separated field path" },
+          threshold: { type: "number", description: "Absolute threshold — peaks must exceed this value" },
+          stddev: { type: "number", description: "Standard deviation multiplier — threshold = mean + N*stddev. Use instead of absolute threshold." },
+        },
+        required: ["topic", "field"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_recordings",
+      description:
+        "Search for MCAP recordings on the server. Requires the Go server with --mcap-path. Returns file metadata including path, time range, and size. Use load_recordings to open results.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "number", description: "Start of time range filter (unix seconds). Files ending before this are excluded." },
+          to: { type: "number", description: "End of time range filter (unix seconds). Files starting after this are excluded." },
+          pattern: { type: "string", description: "Substring match on file path/name" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "load_recordings",
+      description:
+        "Download and open MCAP recording files in the player. Pass file paths from search_recordings results.",
+      parameters: {
+        type: "object",
+        properties: {
+          files: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of file paths from search_recordings results",
+          },
+        },
+        required: ["files"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "annotate_plot",
+      description:
+        "Add annotation regions (highlighted time ranges with labels) to an existing Plot panel. Annotations appear as shaded rectangles on the chart.",
+      parameters: {
+        type: "object",
+        properties: {
+          panelId: { type: "string", description: "Panel ID of the Plot panel (e.g. 'Plot!abc123')" },
+          annotations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                startTime: { type: "number", description: "Start time in seconds" },
+                endTime: { type: "number", description: "End time in seconds" },
+                label: { type: "string", description: "Label for the annotation" },
+                color: { type: "string", description: "Color in hex format (e.g. '#ff0000')" },
+              },
+              required: ["startTime", "endTime", "label"],
+            },
+            description: "Array of annotation regions",
+          },
+        },
+        required: ["panelId", "annotations"],
+      },
+    },
+  },
 ];

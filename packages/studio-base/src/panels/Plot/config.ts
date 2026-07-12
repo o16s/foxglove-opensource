@@ -72,6 +72,13 @@ type DeprecatedPlotConfig = {
   sidebarWidth?: number;
 };
 
+export type PlotAnnotation = {
+  startTime: number;
+  endTime: number;
+  label: string;
+  color?: string;
+};
+
 export type PlotConfig = DeprecatedPlotConfig & {
   paths: PlotPath[];
   minXValue?: number;
@@ -88,5 +95,6 @@ export type PlotConfig = DeprecatedPlotConfig & {
   xAxisPath?: BasePlotPath;
   followingViewWidth?: number;
   sidebarDimension: number;
+  annotations?: PlotAnnotation[];
   [PANEL_TITLE_CONFIG_KEY]?: string;
 };

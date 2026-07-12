@@ -26,5 +26,12 @@ describe("TOOL_DEFINITIONS", () => {
     expect(names).toContain("set_layout");
     expect(names).toContain("get_topic_fields");
     expect(names).toContain("search_topic_fields");
+    expect(names).toContain("seek_to_time");
+    expect(names).toContain("read_field_values");
+    expect(names).toContain("get_statistics");
+    expect(names).toContain("find_peaks");
+    expect(names).toContain("search_recordings");
+    expect(names).toContain("load_recordings");
+    expect(names).toContain("annotate_plot");
   });
 });

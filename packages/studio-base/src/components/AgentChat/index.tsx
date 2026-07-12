@@ -13,6 +13,7 @@ import {
 import { ReactElement, useCallback, useMemo, useRef, useState } from "react";
 import { makeStyles } from "tss-react/mui";
 
+import { MessageEvent } from "@foxglove/studio";
 import { AppSetting } from "@foxglove/studio-base/AppSetting";
 import {
   MessagePipelineContext,
@@ -21,6 +22,7 @@ import {
 import Stack from "@foxglove/studio-base/components/Stack";
 import { useCurrentLayoutActions } from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { usePanelCatalog } from "@foxglove/studio-base/context/PanelCatalogContext";
+import { usePlayerSelection } from "@foxglove/studio-base/context/PlayerSelectionContext";
 import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
 
 import AgentAvatarSvg from "./agent-avatar.svg";
@@ -90,6 +92,9 @@ const useStyles = makeStyles()((theme) => ({
 
 const selectTopics = (ctx: MessagePipelineContext) => ctx.sortedTopics;
 const selectDatatypes = (ctx: MessagePipelineContext) => ctx.datatypes;
+const selectSeekPlayback = (ctx: MessagePipelineContext) => ctx.seekPlayback;
+const selectBlocks = (ctx: MessagePipelineContext) =>
+  ctx.playerState.progress?.messageCache?.blocks;
 
 
 export default function AgentChat(): ReactElement {
@@ -105,13 +110,32 @@ export default function AgentChat(): ReactElement {
 
   const topics = useMessagePipeline(selectTopics);
   const datatypes = useMessagePipeline(selectDatatypes);
+  const seekPlayback = useMessagePipeline(selectSeekPlayback);
+  const blocks = useMessagePipeline(selectBlocks);
   const panelCatalog = usePanelCatalog();
+  const { selectSource } = usePlayerSelection();
   const { addPanel, changePanelLayout, savePanelConfigs, getCurrentLayoutState } =
     useCurrentLayoutActions();
 
   const panelTypes = useMemo(
     () => panelCatalog.getPanels().map((p) => p.type),
     [panelCatalog],
+  );
+
+  const getBlockMessages = useCallback(
+    (topic: string): MessageEvent[] => {
+      if (!blocks) return [];
+      const result: MessageEvent[] = [];
+      for (const block of blocks) {
+        if (!block) continue;
+        const topicMessages = block.messagesByTopic[topic];
+        if (topicMessages) {
+          result.push(...topicMessages);
+        }
+      }
+      return result;
+    },
+    [blocks],
   );
 
   const studioContext = useMemo((): StudioContext => {
@@ -128,8 +152,11 @@ export default function AgentChat(): ReactElement {
       addPanel,
       changePanelLayout,
       savePanelConfigs,
+      seekPlayback,
+      selectSource,
+      getBlockMessages,
     };
-  }, [topics, datatypes, panelTypes, getCurrentLayoutState, addPanel, changePanelLayout, savePanelConfigs]);
+  }, [topics, datatypes, panelTypes, getCurrentLayoutState, addPanel, changePanelLayout, savePanelConfigs, seekPlayback, selectSource, getBlockMessages]);
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();

@@ -51,5 +51,27 @@ Layouts use a mosaic tree structure:
 2. Use get_panel_types to see what visualizations are possible
 3. Use set_layout to create a complete layout with panels and configs, OR use add_panel to add individual panels
 
-When the user asks to see something, figure out which topics match their request, pick appropriate panel types, and create the layout. Be proactive — don't ask unnecessary questions if you can infer the right topics from context.`;
+When the user asks to see something, figure out which topics match their request, pick appropriate panel types, and create the layout. Be proactive — don't ask unnecessary questions if you can infer the right topics from context.
+
+## Data Analysis Workflow
+
+When the user asks about data values, statistics, or anomalies:
+
+1. Use read_field_values to get time-series data for a specific topic and field
+2. Use get_statistics to compute summary statistics (min, max, mean, stddev, count)
+3. Use find_peaks to locate outliers or peaks — provide either an absolute threshold or a stddev multiplier
+4. Use seek_to_time to jump playback to an interesting timestamp
+5. Use annotate_plot to highlight time ranges on a Plot panel
+
+Data analysis tools read from the block loader cache (pre-loaded MCAP data). They do NOT work with live WebSocket streams.
+
+## Recording Search Workflow
+
+When the user asks to browse or search recordings (requires Go server with --mcap-path):
+
+1. Use search_recordings to query the server index — filter by time range and/or filename pattern
+2. Use load_recordings to download and open selected files in the player
+3. After loading, use list_topics to discover what data is in the recording
+
+Recording tools are not available when using the desktop app with local files — only with the Go server.`;
 }

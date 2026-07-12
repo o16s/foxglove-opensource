@@ -102,6 +102,9 @@ type StudioContext = {
   addPanel: (payload) => void;            // from CurrentLayoutActions
   changePanelLayout: (payload) => void;   // from CurrentLayoutActions
   savePanelConfigs: (payload) => void;     // from CurrentLayoutActions
+  seekPlayback: ((time: Time) => void) | undefined;  // from MessagePipeline
+  selectSource: (sourceId, args?) => void;            // from PlayerSelectionContext
+  getBlockMessages: (topic: string) => MessageEvent[];  // reads block loader cache
 };
 ```
 
@@ -140,6 +143,23 @@ Converts assistant response markdown to HTML for rendering. Handles bold, italic
 | `add_panel` | `{ type, config? }` | panel ID | Add a panel to the layout |
 | `set_layout` | `{ layout, configs }` | `"Layout updated"` | Replace entire layout |
 
+### Data Analysis
+
+| Tool | Args | Returns | Description |
+|------|------|---------|-------------|
+| `read_field_values` | `{ topic, field, limit? }` | `[{time, value}]` | Read numeric values from loaded MCAP data (block loader cache). Downsampled to limit (default 5000) |
+| `get_statistics` | `{ topic, field }` | `{min, max, mean, stddev, count, startTime, endTime}` | Compute summary statistics for a numeric field |
+| `find_peaks` | `{ topic, field, threshold?, stddev? }` | `[{time, value}]` | Find local maxima above threshold or mean + N*stddev. Max 50 results, sorted by value descending |
+| `seek_to_time` | `{ time }` | Status | Jump playback to a specific timestamp (seconds) |
+| `annotate_plot` | `{ panelId, annotations }` | Status | Add shaded time-range annotation regions to a Plot panel config |
+
+### Recording Browser (MCAP server only)
+
+| Tool | Args | Returns | Description |
+|------|------|---------|-------------|
+| `search_recordings` | `{ from?, to?, pattern? }` | `McapFileEntry[]` | Query `/api/mcap/index` for matching MCAP files by time range overlap and filename pattern |
+| `load_recordings` | `{ files }` | Status | Download MCAP files from server and open them in the player via `storeDownloadedFiles` + `selectSource` |
+
 ### How Tools Access Studio State
 
 Tools don't call React hooks directly. Instead, the `AgentChat` component:
@@ -164,28 +184,23 @@ For Plot paths: `<exact_topic_name>.<field>.<subfield>`
 - Topic `sensors/imu` → path `sensors/imu.linear_acceleration.x`
 - Topic `/odom` → path `/odom.pose.position.x`
 
-## Planned Tools
+## Implementation Notes
 
-### Recording Browser (MCAP server only)
+### Data Analysis Tools
 
-| Tool | Args | Returns | Description |
-|------|------|---------|-------------|
-| `search_recordings` | `{ from?, to?, pattern? }` | File list with time ranges | Query `/api/mcap/index` for matching MCAP files |
-| `load_recordings` | `{ files }` | Status | Download and open MCAP files in the player |
+Data analysis tools (`read_field_values`, `get_statistics`, `find_peaks`) read from the player's `BlockLoader` cache (`playerState.progress.messageCache.blocks`). For MCAP files, all message data is pre-loaded into blocks. These tools do NOT work with live WebSocket streams (no historical data available).
 
-These tools require the Go server with `--mcap-path` enabled. They call the same HTTP API that the Browse Recordings UI uses. Not available in the desktop app with local files.
+The `getBlockMessages(topic)` helper iterates all blocks and collects `messagesByTopic[topic]` into a flat `MessageEvent[]` array. Field values are extracted using dot-path traversal (e.g. `"linear_acceleration.x"`).
 
-### Data Analysis (MCAP files only)
+### Recording Browser Tools
 
-| Tool | Args | Returns | Description |
-|------|------|---------|-------------|
-| `read_field_values` | `{ topic, field, from?, to?, limit? }` | `[{time, value}]` | Read values from loaded MCAP data (via block loader). Capped/downsampled to ~5k points |
-| `get_statistics` | `{ topic, field, from?, to? }` | `{min, max, mean, stddev, count}` | Compute summary statistics for a field |
-| `find_peaks` | `{ topic, field, threshold?, stddev? }` | `[{time, value}]` | Find peaks above threshold or N standard deviations from mean |
-| `seek_to_time` | `{ time }` | Status | Jump playback to a specific timestamp |
-| `annotate_plot` | `{ panelId, annotations }` | Status | Add shaded time-range regions with labels to a Plot panel |
+Recording tools (`search_recordings`, `load_recordings`) require the Go server with `--mcap-path` enabled. They call the same HTTP API (`/api/mcap/index`, `/api/mcap/files/`) that the Browse Recordings UI uses. Not available in the desktop app with local files.
 
-Data is read from the player's `BlockLoader` cache — no extra downloads. For MCAP files, all message data is pre-loaded. These tools do NOT work with live WebSocket streams (no historical data available).
+`load_recordings` downloads files, stores them via `storeDownloadedFiles()`, then opens them via `selectSource("mcap-server", { type: "connection", params: { downloadId } })`.
+
+### Plot Annotations
+
+The `annotate_plot` tool adds annotation regions to a Plot panel's config. Each annotation has `startTime`, `endTime`, `label`, and optional `color`. The `PlotAnnotation` type is defined in `packages/studio-base/src/panels/Plot/config.ts`. Rendering of annotations as visual overlays on the chart is a separate task.
 
 ## Adding a New Tool
 
