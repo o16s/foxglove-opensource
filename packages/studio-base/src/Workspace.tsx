@@ -134,7 +134,7 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
   const playerProblems = useMessagePipeline(selectPlayerProblems);
   const embedMode = useIsEmbedMode();
   const [fileDownloadState, setFileDownloadState] = useState<
-    { filename: string; loaded: number; total: number } | undefined
+    { filename: string; loaded: number; total: number; phase?: string } | undefined
   >();
 
   const dataSourceDialog = useWorkspaceStore(selectWorkspaceDataSourceDialog);
@@ -566,6 +566,11 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
 
     const abortController = new AbortController();
 
+    const displayName = filePath.includes("/")
+      ? filePath.slice(filePath.lastIndexOf("/") + 1)
+      : filePath;
+    setFileDownloadState({ filename: displayName, loaded: 0, total: 0, phase: "Looking up recording…" });
+
     (async () => {
       try {
         // Fetch index to find the file
@@ -630,7 +635,7 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
           throw new Error("No response body for file download");
         }
 
-        setFileDownloadState({ filename: fileName, loaded: 0, total: contentLength });
+        setFileDownloadState({ filename: fileName, loaded: 0, total: contentLength, phase: undefined });
         const chunks: Uint8Array[] = [];
         let loaded = 0;
         for (;;) {
@@ -717,9 +722,11 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
           >
             <Stack alignItems="center" gap={1} style={{ width: 320 }}>
               <Typography variant="subtitle1" color="white">
-                Downloading {fileDownloadState.filename}
+                {fileDownloadState.phase ?? `Downloading ${fileDownloadState.filename}`}
               </Typography>
-              {fileDownloadState.total > 0 ? (
+              {fileDownloadState.phase != null ? (
+                <LinearProgress variant="indeterminate" style={{ width: "100%" }} />
+              ) : fileDownloadState.total > 0 ? (
                 <>
                   <LinearProgress
                     variant="determinate"
