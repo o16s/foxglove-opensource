@@ -124,6 +124,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
 
+  // --- Incident Context ---
+
+  {
+    type: "function",
+    function: {
+      name: "get_incidents",
+      description:
+        "Get the list of incidents passed via URL parameters. Incidents have a time (ISO 8601), summary, severity (critical/error/warning/info), source, and dedup_key. Use this to understand what events triggered this session and correlate them with data. Returns an empty array if no incidents were provided.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+
   // --- Data Analysis Tools ---
 
   {

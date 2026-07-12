@@ -30,7 +30,7 @@ import { runAgentLoop } from "./agentLoop";
 import { parseMarkdown } from "./parseMarkdown";
 import { buildSystemPrompt } from "./systemPrompt";
 import { TOOL_DEFINITIONS } from "./toolDefinitions";
-import { createToolExecutor, StudioContext } from "./toolExecutor";
+import { Incident, createToolExecutor, StudioContext } from "./toolExecutor";
 import { ChatMessage } from "./types";
 
 const useStyles = makeStyles()((theme) => ({
@@ -122,6 +122,21 @@ export default function AgentChat(): ReactElement {
     [panelCatalog],
   );
 
+  const incidents = useMemo((): Incident[] => {
+    if (typeof window === "undefined") return [];
+    const incParam = new URLSearchParams(window.location.search).get("incidents");
+    if (!incParam) return [];
+    try {
+      return JSON.parse(atob(incParam)) as Incident[];
+    } catch {
+      try {
+        return JSON.parse(incParam) as Incident[];
+      } catch {
+        return [];
+      }
+    }
+  }, []);
+
   const getBlockMessages = useCallback(
     (topic: string): MessageEvent[] => {
       if (!blocks) return [];
@@ -155,8 +170,9 @@ export default function AgentChat(): ReactElement {
       seekPlayback,
       selectSource,
       getBlockMessages,
+      incidents,
     };
-  }, [topics, datatypes, panelTypes, getCurrentLayoutState, addPanel, changePanelLayout, savePanelConfigs, seekPlayback, selectSource, getBlockMessages]);
+  }, [topics, datatypes, panelTypes, getCurrentLayoutState, addPanel, changePanelLayout, savePanelConfigs, seekPlayback, selectSource, getBlockMessages, incidents]);
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();

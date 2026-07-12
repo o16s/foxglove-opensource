@@ -22,6 +22,7 @@ describe("createToolExecutor", () => {
     seekPlayback: jest.fn(),
     selectSource: jest.fn(),
     getBlockMessages: jest.fn().mockReturnValue([]),
+    incidents: [],
     ...overrides,
   });
 
@@ -451,6 +452,38 @@ describe("createToolExecutor", () => {
       params: { downloadId: expect.any(String) },
     });
     expect(result).toContain("Loaded");
+  });
+
+  // --- get_incidents ---
+
+  it("get_incidents returns incidents from URL parameters", async () => {
+    const ctx = makeContext({
+      incidents: [
+        { time: "2026-07-10T14:30:00Z", summary: "Motor overtemp", severity: "warning" as const, source: "PLC" },
+        { time: "2026-07-10T15:00:00Z", summary: "Vibration spike", severity: "critical" as const, dedup_key: "vib-1" },
+      ],
+    });
+    const execute = createToolExecutor(ctx);
+
+    const result = await execute("get_incidents", {});
+    const parsed = JSON.parse(result);
+
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].summary).toBe("Motor overtemp");
+    expect(parsed[0].severity).toBe("warning");
+    expect(parsed[0].source).toBe("PLC");
+    expect(parsed[1].summary).toBe("Vibration spike");
+    expect(parsed[1].dedup_key).toBe("vib-1");
+  });
+
+  it("get_incidents returns empty array when no incidents", async () => {
+    const ctx = makeContext({ incidents: [] });
+    const execute = createToolExecutor(ctx);
+
+    const result = await execute("get_incidents", {});
+    const parsed = JSON.parse(result);
+
+    expect(parsed).toEqual([]);
   });
 
   // --- annotate_plot ---

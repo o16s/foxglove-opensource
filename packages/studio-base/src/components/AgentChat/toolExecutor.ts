@@ -17,6 +17,14 @@ export type TopicInfo = {
   schemaName: string | undefined;
 };
 
+export type Incident = {
+  time: string;
+  summary?: string;
+  severity?: "critical" | "error" | "warning" | "info";
+  dedup_key?: string;
+  source?: string;
+};
+
 export type StudioContext = {
   topics: TopicInfo[];
   datatypes: Immutable<RosDatatypes>;
@@ -28,6 +36,7 @@ export type StudioContext = {
   seekPlayback: ((time: Time) => void) | undefined;
   selectSource: (sourceId: string, args?: DataSourceArgs) => void;
   getBlockMessages: (topic: string) => MessageEvent[];
+  incidents: Incident[];
 };
 
 export type ToolExecutorFn = (name: string, args: Record<string, unknown>) => Promise<string>;
@@ -181,6 +190,10 @@ export function createToolExecutor(
       const timeSec = args.time as number;
       ctx.seekPlayback(fromSec(timeSec));
       return `Seeked to ${timeSec}s`;
+    },
+
+    get_incidents: async (): Promise<string> => {
+      return JSON.stringify(ctx.incidents) as string;
     },
 
     read_field_values: async (args): Promise<string> => {

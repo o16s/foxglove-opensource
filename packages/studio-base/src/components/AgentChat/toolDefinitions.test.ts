@@ -26,6 +26,7 @@ describe("TOOL_DEFINITIONS", () => {
     expect(names).toContain("set_layout");
     expect(names).toContain("get_topic_fields");
     expect(names).toContain("search_topic_fields");
+    expect(names).toContain("get_incidents");
     expect(names).toContain("seek_to_time");
     expect(names).toContain("read_field_values");
     expect(names).toContain("get_statistics");

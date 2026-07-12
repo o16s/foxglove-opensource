@@ -152,6 +152,12 @@ Converts assistant response markdown to HTML for rendering. Handles bold, italic
 | `add_panel` | `{ type, config? }` | panel ID | Add a panel to the layout |
 | `set_layout` | `{ layout, configs }` | `"Layout updated"` | Replace entire layout |
 
+### Incident Context
+
+| Tool | Args | Returns | Description |
+|------|------|---------|-------------|
+| `get_incidents` | none | `Incident[]` | Get incidents passed via `?incidents=` URL parameter. Each has `time` (ISO 8601), `summary`, `severity`, `source`, `dedup_key` |
+
 ### Data Analysis
 
 | Tool | Args | Returns | Description |
@@ -228,10 +234,10 @@ packages/studio-base/src/components/AgentChat/
 ├── types.ts              # ChatMessage, ToolCall, ToolDefinition types
 ├── agentLoop.ts          # Core loop: API → tool calls → repeat
 ├── agentLoop.test.ts     # 4 tests (text response, tool loop, error, max iterations)
-├── toolDefinitions.ts    # JSON schemas for 15 tools sent to LLM
+├── toolDefinitions.ts    # JSON schemas for 16 tools sent to LLM
 ├── toolDefinitions.test.ts
 ├── toolExecutor.ts       # Tool name → handler mapping + StudioContext
-├── toolExecutor.test.ts  # 28 tests (all tools + error/edge cases)
+├── toolExecutor.test.ts  # 30 tests (all tools + error/edge cases)
 ├── systemPrompt.ts       # System message builder
 ├── systemPrompt.test.ts
 ├── parseMarkdown.ts      # MD → HTML (XSS-safe)
