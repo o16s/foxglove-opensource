@@ -93,7 +93,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           config: {
             type: "object",
             description:
-              "Panel configuration. For Image: { imageTopic: '/topic' }. For Plot: { paths: [{ value: '/topic.field', enabled: true }] }. For 3D: {}. For RawMessages: { topicPath: '/topic' }.",
+              "Panel configuration. For Image: { imageTopic: 'exact_topic_name' }. For Plot: { paths: [{ value: 'topic.field', enabled: true, timestampMethod: 'receiveTime' }] }. For 3D: {}. For RawMessages: { topicPath: 'exact_topic_name' }. Use exact topic names from list_topics — do NOT add a leading slash.",
           },
         },
         required: ["type"],
