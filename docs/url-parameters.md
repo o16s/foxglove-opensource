@@ -244,50 +244,121 @@ These are served by the Go server (`cmd/foxglove-server/main.go`), enabled when 
 | GET | `/api/downloads/<filename>` | Serve a desktop installer file |
 | GET | `/` | Serve the web app (SPA with HTML5 history fallback) |
 
-### Video Export: `/api/mcap/video/<path>`
+### Video Streaming: `/api/mcap/video/<path>`
 
-Extracts an H.264 `foxglove.CompressedVideo` topic from an MCAP file and streams it as a browser-playable MP4. **No re-encoding** — the existing H.264 frames are remuxed into a fragmented MP4 container via ffmpeg, which is near-zero CPU cost.
+Streams H.264 video from MCAP recordings as browser-playable MP4 — **no re-encoding**. The existing H.264 frames are remuxed into a fragmented MP4 container via ffmpeg (`-c copy`), which uses near-zero CPU. This works on low-power hardware (e.g. ARM single-board computers).
 
-Requires `ffmpeg` to be installed on the server.
+**Requires `ffmpeg` installed on the server** (`apt install ffmpeg` / `brew install ffmpeg`).
+
+#### Parameters
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `topic` | Yes | The video topic to extract (e.g. `/camera/compressed_video`) |
+| `topic` | Yes | The video topic to extract (e.g. `sensingcam/sick1/video/h264`) |
 | `start` | No | Start time as Unix seconds (float). Only include frames at or after this time. |
 | `end` | No | End time as Unix seconds (float). Only include frames before this time. |
 
-Response: `Content-Type: video/mp4` — fragmented MP4 streamed progressively (playable before download completes).
+Response: `Content-Type: video/mp4` — fragmented MP4, streamed progressively (playable before download completes).
 
-**Examples:**
+#### Workflow
 
-Full file, single topic:
-```
-/api/mcap/video/sensingcam/live-stream/sick2.mcap?topic=/camera/compressed_video
+**1. Find MCAP files**
+
+List all recordings, or filter by time range:
+```bash
+# All files
+curl https://HOST:8152/api/mcap/files
+
+# Files overlapping a time window (returns only matching files)
+curl 'https://HOST:8152/api/mcap/index?start=1752392876&end=1752393000'
 ```
 
-Time-range clip:
+**2. List topics in a file**
+
+Find the video topic name and verify it uses `foxglove.CompressedVideo`:
+```bash
+curl https://HOST:8152/api/mcap/topics/sensingcam/live-stream/sick1_2026-07-13.mcap
 ```
-/api/mcap/video/sensingcam/live-stream/sick2.mcap?topic=/camera/compressed_video&start=1752392876.5&end=1752393000.0
+```json
+[
+  {
+    "topic": "sensingcam/sick1/video/h264",
+    "schemaName": "foxglove.CompressedVideo",
+    "messageEncoding": "protobuf",
+    "messageCount": 9608
+  }
+]
+```
+
+**3. Stream or download the video**
+
+Full file:
+```bash
+curl -o recording.mp4 \
+  'https://HOST:8152/api/mcap/video/sensingcam/live-stream/sick1_2026-07-13.mcap?topic=sensingcam/sick1/video/h264'
+```
+
+60-second clip:
+```bash
+curl -o clip.mp4 \
+  'https://HOST:8152/api/mcap/video/sensingcam/live-stream/sick1_2026-07-13.mcap?topic=sensingcam/sick1/video/h264&start=1783932700&end=1783932760'
 ```
 
 With authentication:
-```
-/api/mcap/video/sensingcam/live-stream/sick2.mcap?topic=/camera/compressed_video&token=YOUR_TOKEN
+```bash
+curl -o clip.mp4 \
+  'https://HOST:8152/api/mcap/video/path/to/file.mcap?topic=cam/h264&token=YOUR_TOKEN'
 ```
 
-Open directly in a browser or use in an HTML `<video>` tag:
+#### Browser Playback
+
+Open the URL directly in any browser — the video plays inline. Or embed it:
+
 ```html
 <video controls autoplay>
-  <source src="/api/mcap/video/recording.mcap?topic=/cam0/h264" type="video/mp4">
+  <source src="/api/mcap/video/recording.mcap?topic=cam/h264" type="video/mp4" />
 </video>
 ```
 
-**Notes:**
+JavaScript (e.g. building a preview gallery):
+```javascript
+const index = await fetch("/api/mcap/index").then(r => r.text());
+const files = index.split("\n")
+  .filter(Boolean)
+  .map(JSON.parse)
+  .filter(l => l.file)
+  .map(l => l.file);
+
+for (const file of files) {
+  const topics = await fetch(`/api/mcap/topics/${file.path}`).then(r => r.json());
+  const video = topics.find(t => t.schemaName === "foxglove.CompressedVideo");
+  if (video) {
+    const el = document.createElement("video");
+    el.src = `/api/mcap/video/${file.path}?topic=${encodeURIComponent(video.topic)}`;
+    el.controls = true;
+    document.body.appendChild(el);
+  }
+}
+```
+
+#### How It Works
+
+1. Opens the MCAP file and reads messages for the specified topic
+2. Extracts raw H.264 NAL units from each `foxglove.CompressedVideo` message
+3. Converts AVCC format to Annex B if needed (start-code delimited)
+4. Scans ahead for SPS/PPS parameter sets and prepends them so ffmpeg can initialize
+5. Estimates FPS from message timestamps (clamped 1–120 fps)
+6. Pipes the Annex B stream to `ffmpeg -f h264 -c copy -movflags frag_keyframe+empty_moov -f mp4`
+7. Streams ffmpeg's output directly to the HTTP response with progressive flushing
+
+#### Notes
+
 - Supports both `protobuf` and `cdr` (ROS 2) message encodings
+- Works with in-progress MCAP files (still being written)
 - Multiple parallel requests are safe — each spawns its own ffmpeg process
-- FPS is auto-detected from message timestamps
 - If the client disconnects, the ffmpeg process is cleaned up automatically
 - `<path>` is relative to the `--mcap-path` directory (absolute paths are also accepted)
+- Handles H.264 streams where SPS/PPS are in separate messages from IDR frames
 
 ## Server CLI Flags
 

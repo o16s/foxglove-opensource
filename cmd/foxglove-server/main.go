@@ -257,12 +257,89 @@ func extractCDRCompressedVideoData(msg []byte) ([]byte, error) {
 func extractVideoData(msgData []byte, encoding string) ([]byte, error) {
 	switch encoding {
 	case "protobuf":
-		return extractProtobufBytesField(msgData, 4) // field 4 = data in foxglove.CompressedVideo
+		return extractProtobufBytesField(msgData, 3) // field 3 = data in foxglove.CompressedVideo
 	case "cdr":
 		return extractCDRCompressedVideoData(msgData)
 	default:
 		return nil, fmt.Errorf("unsupported message encoding %q for video extraction", encoding)
 	}
+}
+
+var annexBStartCode = []byte{0, 0, 0, 1}
+
+// ensureAnnexB converts H.264 data to Annex B format if needed.
+// AVCC format uses 4-byte big-endian length prefixes per NAL unit;
+// Annex B uses 00 00 00 01 start codes. ffmpeg's raw h264 demuxer requires Annex B.
+func ensureAnnexB(data []byte) []byte {
+	if len(data) < 4 {
+		return data
+	}
+	// Detect format: Annex B starts with 00 00 00 01 or 00 00 01
+	if data[0] == 0 && data[1] == 0 && (data[2] == 1 || (data[2] == 0 && data[3] == 1)) {
+		return data // already Annex B
+	}
+	// Assume AVCC: 4-byte big-endian length prefix per NAL unit
+	out := make([]byte, 0, len(data))
+	offset := 0
+	for offset+4 <= len(data) {
+		nalLen := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+		offset += 4
+		if nalLen <= 0 || offset+nalLen > len(data) {
+			break
+		}
+		out = append(out, annexBStartCode...)
+		out = append(out, data[offset:offset+nalLen]...)
+		offset += nalLen
+	}
+	if len(out) == 0 {
+		return data // fallback: return original if parsing failed
+	}
+	return out
+}
+
+type annexBNAL struct {
+	offset  int
+	length  int
+	nalType byte
+}
+
+// findAnnexBNALs locates NAL units in an Annex B byte stream.
+func findAnnexBNALs(data []byte) []annexBNAL {
+	var nals []annexBNAL
+	i := 0
+	for i < len(data) {
+		// Look for start code: 00 00 00 01 or 00 00 01
+		scLen := 0
+		if i+4 <= len(data) && data[i] == 0 && data[i+1] == 0 && data[i+2] == 0 && data[i+3] == 1 {
+			scLen = 4
+		} else if i+3 <= len(data) && data[i] == 0 && data[i+1] == 0 && data[i+2] == 1 {
+			scLen = 3
+		}
+		if scLen == 0 {
+			i++
+			continue
+		}
+		nalStart := i
+		nalHeader := data[i+scLen]
+		// Find end: next start code or end of data
+		j := i + scLen + 1
+		for j < len(data)-2 {
+			if data[j] == 0 && data[j+1] == 0 && (data[j+2] == 1 || (j+3 < len(data) && data[j+2] == 0 && data[j+3] == 1)) {
+				break
+			}
+			j++
+		}
+		if j >= len(data)-2 {
+			j = len(data)
+		}
+		nals = append(nals, annexBNAL{
+			offset:  nalStart,
+			length:  j - nalStart,
+			nalType: nalHeader & 0x1f,
+		})
+		i = j
+	}
+	return nals
 }
 
 func generateSelfSignedCert() (tls.Certificate, error) {
@@ -506,12 +583,6 @@ func main() {
 		}
 		defer reader.Close()
 
-		info, err := reader.Info()
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to read MCAP info: %v", err), http.StatusInternalServerError)
-			return
-		}
-
 		type TopicInfo struct {
 			Topic           string `json:"topic"`
 			SchemaName      string `json:"schemaName"`
@@ -520,19 +591,63 @@ func main() {
 		}
 
 		var topics []TopicInfo
-		for _, ch := range info.Channels {
-			ti := TopicInfo{
-				Topic:           ch.Topic,
-				MessageEncoding: ch.MessageEncoding,
+
+		// Try the summary section first (O(1) for complete files)
+		info, infoErr := reader.Info()
+		if infoErr == nil {
+			for _, ch := range info.Channels {
+				ti := TopicInfo{
+					Topic:           ch.Topic,
+					MessageEncoding: ch.MessageEncoding,
+				}
+				if schema, ok := info.Schemas[ch.SchemaID]; ok {
+					ti.SchemaName = schema.Name
+				}
+				if info.Statistics != nil {
+					ti.MessageCount = info.Statistics.ChannelMessageCounts[ch.ID]
+				}
+				topics = append(topics, ti)
 			}
-			if schema, ok := info.Schemas[ch.SchemaID]; ok {
-				ti.SchemaName = schema.Name
+		} else {
+			// Fallback for in-progress files: scan records from the start.
+			// Re-open file since the reader consumed some data.
+			f.Seek(0, io.SeekStart)
+			fallbackReader, err := mcap.NewReader(f)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to open MCAP: %v", err), http.StatusInternalServerError)
+				return
 			}
-			if info.Statistics != nil {
-				ti.MessageCount = info.Statistics.ChannelMessageCounts[ch.ID]
+			defer fallbackReader.Close()
+
+			schemas := make(map[uint16]*mcap.Schema)
+			seen := make(map[uint16]bool)
+			it, err := fallbackReader.Messages(mcap.UsingIndex(false))
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to read MCAP: %v", err), http.StatusInternalServerError)
+				return
 			}
-			topics = append(topics, ti)
+			for {
+				schema, channel, _, err := it.Next(nil)
+				if err != nil {
+					break
+				}
+				if schema != nil {
+					schemas[schema.ID] = schema
+				}
+				if channel != nil && !seen[channel.ID] {
+					seen[channel.ID] = true
+					ti := TopicInfo{
+						Topic:           channel.Topic,
+						MessageEncoding: channel.MessageEncoding,
+					}
+					if s, ok := schemas[channel.SchemaID]; ok {
+						ti.SchemaName = s.Name
+					}
+					topics = append(topics, ti)
+				}
+			}
 		}
+
 		if topics == nil {
 			topics = []TopicInfo{}
 		}
@@ -777,16 +892,19 @@ func main() {
 			return
 		}
 
-		// Buffer initial messages to detect encoding and estimate framerate
+		// Buffer initial messages to detect encoding, find SPS/PPS, and estimate FPS.
+		// H.264 streams often place SPS/PPS in separate messages that may not appear
+		// until dozens of frames in. ffmpeg cannot initialize without them.
 		type videoFrame struct {
 			data    []byte
 			logTime uint64
 		}
-		const fpsProbeCount = 30
+		const maxProbeMessages = 300 // enough to find SPS/PPS even in slow-keyframe streams
 		var frames []videoFrame
+		var spsData, ppsData []byte
 		var msgEncoding string
 
-		for len(frames) < fpsProbeCount {
+		for len(frames) < maxProbeMessages {
 			_, channel, msg, err := it.Next(nil)
 			if err != nil {
 				if errors.Is(err, io.EOF) {
@@ -802,7 +920,30 @@ func main() {
 			if extractErr != nil {
 				continue
 			}
-			frames = append(frames, videoFrame{data: vdata, logTime: msg.LogTime})
+			annexB := ensureAnnexB(vdata)
+			frames = append(frames, videoFrame{data: annexB, logTime: msg.LogTime})
+
+			// Extract SPS/PPS if we haven't found them yet
+			if spsData == nil || ppsData == nil {
+				for _, nal := range findAnnexBNALs(annexB) {
+					switch nal.nalType {
+					case 7:
+						if spsData == nil {
+							spsData = make([]byte, nal.length)
+							copy(spsData, annexB[nal.offset:nal.offset+nal.length])
+						}
+					case 8:
+						if ppsData == nil {
+							ppsData = make([]byte, nal.length)
+							copy(ppsData, annexB[nal.offset:nal.offset+nal.length])
+						}
+					}
+				}
+			}
+			// Stop probing early once we have SPS+PPS and enough frames for FPS estimate
+			if spsData != nil && ppsData != nil && len(frames) >= 30 {
+				break
+			}
 		}
 
 		if len(frames) == 0 {
@@ -866,6 +1007,17 @@ func main() {
 		// This runs concurrently with stdout reading to avoid pipe deadlocks.
 		go func() {
 			defer stdin.Close()
+			// Write SPS+PPS first so ffmpeg can initialize the decoder
+			if spsData != nil {
+				if _, err := stdin.Write(spsData); err != nil {
+					return
+				}
+			}
+			if ppsData != nil {
+				if _, err := stdin.Write(ppsData); err != nil {
+					return
+				}
+			}
 			for _, frame := range frames {
 				if _, err := stdin.Write(frame.data); err != nil {
 					return
@@ -880,7 +1032,7 @@ func main() {
 				if extractErr != nil {
 					continue
 				}
-				if _, err := stdin.Write(vdata); err != nil {
+				if _, err := stdin.Write(ensureAnnexB(vdata)); err != nil {
 					return
 				}
 			}
