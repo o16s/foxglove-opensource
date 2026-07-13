@@ -110,22 +110,18 @@ export async function exportToWebM(
     const height = firstFrame.height;
     firstFrame.close();
 
-    const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      throw new Error("Could not create canvas 2d context");
-    }
-
-    // Calculate approximate framerate from message timestamps
+    // MediaRecorder uses wall-clock time between requestFrame() calls to determine
+    // frame duration. We sleep briefly per frame so timestamps are distinct, but cap
+    // the delay to keep export much faster than real-time.
     const fps = estimateFps(messages);
+    const frameDelay = Math.max(1, Math.min(10, Math.round(1000 / fps)));
 
-    // We need to transfer to a regular canvas for MediaRecorder
-    const visibleCanvas = document.createElement("canvas");
-    visibleCanvas.width = width;
-    visibleCanvas.height = height;
-    const visibleCtx = visibleCanvas.getContext("2d")!;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d")!;
 
-    const stream = visibleCanvas.captureStream(0); // 0 = manual frame control
+    const stream = canvas.captureStream(0); // 0 = manual frame control
     const recorder = new MediaRecorder(stream, {
       mimeType: getSupportedMimeType(),
       videoBitsPerSecond: 8_000_000,
@@ -147,10 +143,15 @@ export async function exportToWebM(
       };
     });
 
-    recorder.start();
+    // Request data frequently to avoid buffering everything in memory
+    recorder.start(1000);
+
+    const track = stream.getVideoTracks()[0];
+    const requestFrame = track && "requestFrame" in track
+      ? () => { (track as unknown as { requestFrame: () => void }).requestFrame(); }
+      : undefined;
 
     try {
-      const frameDuration = 1000 / fps;
       let framesEncoded = 0;
       for (let i = 0; i < messages.length; i++) {
         let bitmap: ImageBitmap;
@@ -165,24 +166,15 @@ export async function exportToWebM(
           throw err;
         }
 
-        // Draw to offscreen canvas, then transfer to visible canvas
         ctx.drawImage(bitmap, 0, 0, width, height);
         bitmap.close();
 
-        const imageData = ctx.getImageData(0, 0, width, height);
-        visibleCtx.putImageData(imageData, 0, 0);
-
-        // Request frame from the stream
-        const track = stream.getVideoTracks()[0];
-        if (track && "requestFrame" in track) {
-          (track as unknown as { requestFrame: () => void }).requestFrame();
-        }
-
-        // Wait the frame duration to maintain timing
-        await new Promise((resolve) => setTimeout(resolve, frameDuration));
+        requestFrame?.();
 
         framesEncoded++;
         onProgress?.({ framesProcessed: i + 1, totalFrames: messages.length });
+
+        await new Promise((resolve) => setTimeout(resolve, frameDelay));
       }
 
       if (framesEncoded === 0) {
@@ -198,8 +190,8 @@ export async function exportToWebM(
       } catch {
         // Recorder may already be in an error state
       }
-      for (const track of stream.getTracks()) {
-        track.stop();
+      for (const t of stream.getTracks()) {
+        t.stop();
       }
       throw err;
     }
