@@ -100,7 +100,7 @@ function CompatibilityBannerBase({
 
         <div>
           <Typography variant="subtitle2">
-            {prompt} Octaview Studio currently requires Chrome v{MINIMUM_CHROME_VERSION}+.
+            {prompt} octaview Studio currently requires Chrome v{MINIMUM_CHROME_VERSION}+.
           </Typography>
 
           {!isChrome && (

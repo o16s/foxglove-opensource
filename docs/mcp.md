@@ -1,6 +1,6 @@
 # Agent Tool Architecture (MCP)
 
-The AI Agent in Octaview Studio uses a tool-calling pattern inspired by MCP (Model Context Protocol), but implemented as **in-process function calls** rather than the MCP wire protocol. The tools run entirely in the browser — no server-side execution.
+The AI Agent in octaview Studio uses a tool-calling pattern inspired by MCP (Model Context Protocol), but implemented as **in-process function calls** rather than the MCP wire protocol. The tools run entirely in the browser — no server-side execution.
 
 ## Architecture Overview
 
@@ -122,7 +122,7 @@ The executor is recreated on each send (via `useMemo`) so it always has fresh co
 ### 5. System Prompt (`systemPrompt.ts`)
 
 Builds the system message that instructs the LLM about:
-- What Octaview Studio is
+- What octaview Studio is
 - Available panel types and their config formats
 - MessagePath syntax rules (topic name conventions, no spurious slash prepending)
 - Layout mosaic tree structure

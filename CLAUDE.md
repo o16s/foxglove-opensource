@@ -1,8 +1,8 @@
-# Octaview Studio - Development Guidelines
+# octaview Studio - Development Guidelines
 
 ## Project Overview
 
-Octaview Studio (formerly Foxglove Studio) is an open-source robotics data visualization platform. It's a React/TypeScript monorepo that runs as a web app, Electron desktop app, and can be served by a Go backend.
+octaview Studio (formerly Foxglove Studio) is an open-source robotics data visualization platform. It's a React/TypeScript monorepo that runs as a web app, Electron desktop app, and can be served by a Go backend.
 
 ## Architecture Quick Reference
 

@@ -1,4 +1,4 @@
-# Contributing to Octaview Studio
+# Contributing to octaview Studio
 
 **Supported development environments:** Linux, Windows, macOS
 
@@ -34,7 +34,7 @@ $ yarn test:watch   # run tests on changed files
 
 ## Localization
 
-At this time, first-class support for Octaview Studio is provided in English only. Localization into other languages is available on a best-effort basis, with translations provided by community volunteers. Current community supported-languages are:
+At this time, first-class support for octaview Studio is provided in English only. Localization into other languages is available on a best-effort basis, with translations provided by community volunteers. Current community supported-languages are:
 
 - Chinese
 - Japanese
@@ -48,7 +48,7 @@ Translation support is implemented using [`react-i18next`](https://react.i18next
 
 ### Add translations to the `i18n` directory
 
-The [`i18n` directory](packages/studio-base/src/i18n) contains translated (localized) strings for all languages supported by Octaview Studio.
+The [`i18n` directory](packages/studio-base/src/i18n) contains translated (localized) strings for all languages supported by octaview Studio.
 
 Translated strings are organized into _namespaces_ — e.g. [`i18n/[language]/appSettings.ts`](packages/studio-base/src/i18n/en/appSettings.ts) contains translations for the app's Settings tab.
 

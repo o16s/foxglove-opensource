@@ -1,13 +1,13 @@
 {
   "name": "@foxglove/theme",
-  "description": "Octaview @mui/material theme",
+  "description": "octaview @mui/material theme",
   "private": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/foxglove/studio.git"
   },
   "author": {
-    "name": "Octaview",
+    "name": "octaview",
     "email": "support@octaview.ai"
   },
   "homepage": "https://octaview.ai/",

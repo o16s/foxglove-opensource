@@ -8,7 +8,7 @@ export const appSettings = {
   askEachTime: "Preguntar cada vez",
   colorScheme: "Esquema de colores",
   dark: "Oscuro",
-  debugModeDescription: "Habilitar paneles y funciones para depurar Octaview",
+  debugModeDescription: "Habilitar paneles y funciones para depurar octaview",
   desktopApp: "Aplicación de escritorio",
   displayTimestampsIn: "Mostrar marcas de tiempo en",
   experimentalFeatures: "Funciones experimentales",

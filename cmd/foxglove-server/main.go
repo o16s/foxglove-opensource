@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -12,15 +13,19 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -168,6 +173,94 @@ func getMcapTimeRangeFromChunks(path string) (startNs, endNs uint64, err error) 
 	return startNs, endNs, nil
 }
 
+// extractProtobufBytesField extracts a length-delimited field by number from
+// protobuf wire format. Used to get the `data` bytes (field 4) from
+// foxglove.CompressedVideo messages.
+func extractProtobufBytesField(data []byte, fieldNum uint64) ([]byte, error) {
+	offset := 0
+	for offset < len(data) {
+		tag, n := binary.Uvarint(data[offset:])
+		if n <= 0 {
+			return nil, fmt.Errorf("invalid protobuf varint at offset %d", offset)
+		}
+		offset += n
+		wireType := tag & 0x7
+		field := tag >> 3
+
+		switch wireType {
+		case 0: // varint
+			_, vn := binary.Uvarint(data[offset:])
+			if vn <= 0 {
+				return nil, fmt.Errorf("invalid varint value at offset %d", offset)
+			}
+			offset += vn
+		case 1: // 64-bit fixed
+			offset += 8
+		case 2: // length-delimited
+			length, ln := binary.Uvarint(data[offset:])
+			if ln <= 0 {
+				return nil, fmt.Errorf("invalid length varint at offset %d", offset)
+			}
+			offset += ln
+			if uint64(len(data)-offset) < length {
+				return nil, fmt.Errorf("truncated field %d", field)
+			}
+			if field == fieldNum {
+				return data[offset : offset+int(length)], nil
+			}
+			offset += int(length)
+		case 5: // 32-bit fixed
+			offset += 4
+		default:
+			return nil, fmt.Errorf("unknown wire type %d at offset %d", wireType, offset)
+		}
+	}
+	return nil, fmt.Errorf("field %d not found", fieldNum)
+}
+
+// extractCDRCompressedVideoData extracts the `data` bytes from a CDR-encoded
+// foxglove CompressedVideo message. CDR field order: timestamp, frame_id, data, format.
+func extractCDRCompressedVideoData(msg []byte) ([]byte, error) {
+	if len(msg) < 16 {
+		return nil, fmt.Errorf("CDR message too short (%d bytes)", len(msg))
+	}
+	offset := 4 // skip CDR encapsulation header
+
+	// timestamp: uint32 sec + uint32 nsec
+	offset += 8
+
+	// frame_id: CDR string (uint32 length including null + chars)
+	if offset+4 > len(msg) {
+		return nil, fmt.Errorf("truncated frame_id length")
+	}
+	strLen := int(binary.LittleEndian.Uint32(msg[offset : offset+4]))
+	offset += 4 + strLen
+	offset = (offset + 3) &^ 3 // align to 4 bytes
+
+	// data: CDR sequence<uint8> (uint32 length + bytes)
+	if offset+4 > len(msg) {
+		return nil, fmt.Errorf("truncated data length")
+	}
+	dataLen := int(binary.LittleEndian.Uint32(msg[offset : offset+4]))
+	offset += 4
+	if offset+dataLen > len(msg) {
+		return nil, fmt.Errorf("truncated data (%d + %d > %d)", offset, dataLen, len(msg))
+	}
+	return msg[offset : offset+dataLen], nil
+}
+
+// extractVideoData dispatches to the correct extractor based on message encoding.
+func extractVideoData(msgData []byte, encoding string) ([]byte, error) {
+	switch encoding {
+	case "protobuf":
+		return extractProtobufBytesField(msgData, 4) // field 4 = data in foxglove.CompressedVideo
+	case "cdr":
+		return extractCDRCompressedVideoData(msgData)
+	default:
+		return nil, fmt.Errorf("unsupported message encoding %q for video extraction", encoding)
+	}
+}
+
 func generateSelfSignedCert() (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -181,7 +274,7 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
-		Subject:      pkix.Name{CommonName: "Octaview Studio"},
+		Subject:      pkix.Name{CommonName: "octaview Studio"},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(5 * 365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -390,6 +483,28 @@ func main() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Cache-Control", "no-cache")
 
+		// Optional time-range filter: only return files overlapping [filterStartNs, filterEndNs]
+		var filterStartNs, filterEndNs uint64
+		hasFilter := false
+		if s := r.URL.Query().Get("start"); s != "" {
+			sec, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				http.Error(w, "Invalid 'start' parameter", http.StatusBadRequest)
+				return
+			}
+			filterStartNs = uint64(sec * 1e9)
+			hasFilter = true
+		}
+		if s := r.URL.Query().Get("end"); s != "" {
+			sec, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				http.Error(w, "Invalid 'end' parameter", http.StatusBadRequest)
+				return
+			}
+			filterEndNs = uint64(sec * 1e9)
+			hasFilter = true
+		}
+
 		enc := json.NewEncoder(w)
 
 		// Phase 1: quick walk to count .mcap files
@@ -453,6 +568,16 @@ func main() {
 				}
 			}
 
+			// Apply time-range filter: skip files that don't overlap [filterStart, filterEnd]
+			if hasFilter {
+				if filterEndNs > 0 && startNs >= filterEndNs {
+					continue
+				}
+				if filterStartNs > 0 && endNs <= filterStartNs {
+					continue
+				}
+			}
+
 			folder := filepath.Dir(entry.relPath)
 			if folder == "." {
 				folder = ""
@@ -491,6 +616,218 @@ func main() {
 
 		enc.Encode(map[string]bool{"done": true})
 		flusher.Flush()
+	})
+
+	// API: remux MCAP H.264 video topic to streamable MP4 (no re-encoding)
+	// Usage: GET /api/mcap/video/<path>?topic=<topic>[&start=<unix_sec>][&end=<unix_sec>]
+	mux.HandleFunc("/api/mcap/video/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		topic := r.URL.Query().Get("topic")
+		if topic == "" {
+			http.Error(w, "Missing required 'topic' query parameter", http.StatusBadRequest)
+			return
+		}
+
+		relPath := strings.TrimPrefix(r.URL.Path, "/api/mcap/video/")
+		if relPath == "" {
+			http.Error(w, "Missing file path", http.StatusBadRequest)
+			return
+		}
+		relPath = strings.TrimPrefix(relPath, absPath)
+		relPath = strings.TrimPrefix(relPath, "/")
+		cleanPath := filepath.Clean(relPath)
+		if strings.Contains(cleanPath, "..") {
+			http.Error(w, "Invalid path", http.StatusBadRequest)
+			return
+		}
+		fullPath := filepath.Join(absPath, cleanPath)
+		if !strings.HasPrefix(fullPath, absPath) {
+			http.Error(w, "Invalid path", http.StatusBadRequest)
+			return
+		}
+
+		// Build MCAP read options: topic filter + optional time range
+		readOpts := []mcap.ReadOpt{
+			mcap.WithTopics([]string{topic}),
+		}
+		if s := r.URL.Query().Get("start"); s != "" {
+			sec, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				http.Error(w, "Invalid 'start' parameter", http.StatusBadRequest)
+				return
+			}
+			readOpts = append(readOpts, mcap.AfterNanos(uint64(sec*1e9)))
+		}
+		if s := r.URL.Query().Get("end"); s != "" {
+			sec, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				http.Error(w, "Invalid 'end' parameter", http.StatusBadRequest)
+				return
+			}
+			readOpts = append(readOpts, mcap.BeforeNanos(uint64(sec*1e9)))
+		}
+
+		// Open MCAP file
+		f, err := os.Open(fullPath)
+		if err != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+
+		reader, err := mcap.NewReader(f)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to open MCAP: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer reader.Close()
+
+		it, err := reader.Messages(readOpts...)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to read messages: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Buffer initial messages to detect encoding and estimate framerate
+		type videoFrame struct {
+			data    []byte
+			logTime uint64
+		}
+		const fpsProbeCount = 30
+		var frames []videoFrame
+		var msgEncoding string
+
+		for len(frames) < fpsProbeCount {
+			_, channel, msg, err := it.Next(nil)
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				http.Error(w, fmt.Sprintf("Failed to read messages: %v", err), http.StatusInternalServerError)
+				return
+			}
+			if msgEncoding == "" {
+				msgEncoding = channel.MessageEncoding
+			}
+			vdata, extractErr := extractVideoData(msg.Data, msgEncoding)
+			if extractErr != nil {
+				continue
+			}
+			frames = append(frames, videoFrame{data: vdata, logTime: msg.LogTime})
+		}
+
+		if len(frames) == 0 {
+			http.Error(w, fmt.Sprintf("No video messages found on topic %q", topic), http.StatusNotFound)
+			return
+		}
+
+		// Estimate FPS from message timestamps
+		fps := 30.0
+		if len(frames) >= 2 {
+			dtSec := float64(frames[len(frames)-1].logTime-frames[0].logTime) / 1e9
+			if dtSec > 0 {
+				fps = float64(len(frames)-1) / dtSec
+				if fps < 1 {
+					fps = 1
+				} else if fps > 120 {
+					fps = 120
+				}
+			}
+		}
+
+		// Start ffmpeg: remux raw H.264 into fragmented MP4 (zero CPU re-encoding)
+		ctx := r.Context()
+		cmd := exec.CommandContext(ctx, "ffmpeg",
+			"-v", "error",
+			"-f", "h264",
+			"-r", strconv.FormatFloat(fps, 'f', 2, 64),
+			"-i", "pipe:0",
+			"-c", "copy",
+			"-movflags", "frag_keyframe+empty_moov",
+			"-f", "mp4",
+			"pipe:1",
+		)
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			http.Error(w, "Failed to create ffmpeg pipe", http.StatusInternalServerError)
+			return
+		}
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			http.Error(w, "Failed to create ffmpeg pipe", http.StatusInternalServerError)
+			return
+		}
+		var stderrBuf bytes.Buffer
+		cmd.Stderr = &stderrBuf
+
+		// Set response headers before streaming begins
+		baseName := strings.TrimSuffix(filepath.Base(cleanPath), ".mcap")
+		safeTopic := strings.NewReplacer("/", "_", " ", "_").Replace(strings.TrimPrefix(topic, "/"))
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Type, Content-Disposition")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s_%s.mp4"`, baseName, safeTopic))
+
+		if err := cmd.Start(); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to start ffmpeg (is it installed?): %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Feed MCAP video data to ffmpeg stdin in background goroutine.
+		// This runs concurrently with stdout reading to avoid pipe deadlocks.
+		go func() {
+			defer stdin.Close()
+			for _, frame := range frames {
+				if _, err := stdin.Write(frame.data); err != nil {
+					return
+				}
+			}
+			for {
+				_, _, msg, err := it.Next(nil)
+				if err != nil {
+					return
+				}
+				vdata, extractErr := extractVideoData(msg.Data, msgEncoding)
+				if extractErr != nil {
+					continue
+				}
+				if _, err := stdin.Write(vdata); err != nil {
+					return
+				}
+			}
+		}()
+
+		// Stream ffmpeg output to HTTP response with flushing for progressive playback
+		flusher, canFlush := w.(http.Flusher)
+		copyBuf := make([]byte, 64*1024)
+		for {
+			n, readErr := stdout.Read(copyBuf)
+			if n > 0 {
+				if _, writeErr := w.Write(copyBuf[:n]); writeErr != nil {
+					break
+				}
+				if canFlush {
+					flusher.Flush()
+				}
+			}
+			if readErr != nil {
+				break
+			}
+		}
+
+		if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+			log.Printf("ffmpeg error for %s topic=%s: %v\nstderr: %s", cleanPath, topic, err, stderrBuf.String())
+		}
 	})
 
 	} // end if absPath != ""
@@ -681,7 +1018,7 @@ func main() {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `<!DOCTYPE html>
-<html><head><title>Octaview Studio</title>
+<html><head><title>octaview Studio</title>
 <style>
   body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #0E0E16; color: #F7F7F5; }
   .box { text-align: center; max-width: 400px; }
@@ -693,7 +1030,7 @@ func main() {
   button:hover { background: #E05000; }
 </style></head>
 <body><div class="box">
-  <h1>Octaview Studio</h1>
+  <h1>octaview Studio</h1>
   <p>Enter access token to continue</p>
   <form method="get"><input name="token" type="password" placeholder="Token" autofocus /><button type="submit">Sign in</button></form>
 </div></body></html>`)
@@ -714,7 +1051,7 @@ func main() {
 	}
 
 	if *tlsCert != "" && *tlsKey != "" {
-		log.Printf("Octaview Studio server starting on https://localhost:%d", *port)
+		log.Printf("octaview Studio server starting on https://localhost:%d", *port)
 		log.Fatal(http.ListenAndServeTLS(addr, *tlsCert, *tlsKey, handler))
 	} else if *useTLS {
 		cert, err := generateSelfSignedCert()
@@ -722,7 +1059,7 @@ func main() {
 			log.Fatalf("Failed to generate self-signed certificate: %v", err)
 		}
 		log.Printf("Generated self-signed TLS certificate (valid 5 years, localhost/127.0.0.1)")
-		log.Printf("Octaview Studio server starting on https://localhost:%d", *port)
+		log.Printf("octaview Studio server starting on https://localhost:%d", *port)
 		server := &http.Server{
 			Addr:    addr,
 			Handler: handler,
@@ -732,7 +1069,7 @@ func main() {
 		}
 		log.Fatal(server.ListenAndServeTLS("", ""))
 	} else {
-		log.Printf("Octaview Studio server starting on http://localhost:%d", *port)
+		log.Printf("octaview Studio server starting on http://localhost:%d", *port)
 		log.Fatal(http.ListenAndServe(addr, handler))
 	}
 }

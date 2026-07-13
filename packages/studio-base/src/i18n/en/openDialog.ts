@@ -4,7 +4,7 @@
 
 export const openDialog = {
   canBeShared: "Share data files, visualization layouts, and custom extensions with teammates",
-  collaborateTitle: "Accelerate development with Octaview",
+  collaborateTitle: "Accelerate development with octaview",
   convenientWebInterface:
     "Use a convenient web interface to tag, search, and retrieve data at lightning speed",
   createAFreeAccount: "Create a free account",
@@ -15,8 +15,8 @@ export const openDialog = {
   joinOurSlack: "Join our Slack",
   learnMore: "Learn more",
   needHelp: "Need help?",
-  needHelpDescription: "View our documentation, or check out the tutorials on the Octaview blog.",
-  newToFoxgloveStudio: "New to Octaview Studio?",
+  needHelpDescription: "View our documentation, or check out the tutorials on the octaview blog.",
+  newToFoxgloveStudio: "New to octaview Studio?",
   newToFoxgloveStudioDescription:
     "Start by exploring a sample dataset or checking out our documentation.",
   openAGitHubIssue: "Open a GitHub issue",
@@ -26,15 +26,15 @@ export const openDialog = {
   openLocalFile: "Open local file",
   openLocalFileDescription: "Visualize data directly from your local filesystem.",
   openUrl: "Upload and share data",
-  openUrlDescription: "Use Octaview to share data with your team.",
+  openUrlDescription: "Use octaview to share data with your team.",
   recentDataSources: "Recent data sources",
   secureStorageOfData: "Securely store petabytes of ROS or custom data",
   seeTutorials: "See tutorials",
   shareLayouts: "Share layouts",
   signIn: "Sign in",
-  startCollaborating: "Start collaborating with your Octaview organization",
+  startCollaborating: "Start collaborating with your octaview organization",
   startCollaboratingDescription:
-    "Make the most of your Octaview account – whether you want to dive deep on your data or share tools with your teammates.",
+    "Make the most of your octaview account – whether you want to dive deep on your data or share tools with your teammates.",
   uploadToDataPlatform: "Upload to Data Platform",
   viewOurDocs: "View our docs",
 };

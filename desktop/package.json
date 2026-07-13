@@ -1,7 +1,7 @@
 {
   "name": "octaview-studio-desktop",
   "version": "1.90.0",
-  "description": "Octaview Studio desktop application",
+  "description": "octaview Studio desktop application",
   "main": "main.js",
   "private": true,
   "repository": {
@@ -21,7 +21,7 @@
   },
   "build": {
     "appId": "ai.octaview.studio",
-    "productName": "Octaview Studio",
+    "productName": "octaview Studio",
     "files": [
       "main.js",
       "preload.js"
@@ -39,7 +39,7 @@
       "icon": "build/icon.icns"
     },
     "dmg": {
-      "title": "Octaview Studio"
+      "title": "octaview Studio"
     },
     "win": {
       "target": "nsis",

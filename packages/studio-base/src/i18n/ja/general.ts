@@ -6,6 +6,6 @@ import { TypeOptions } from "i18next";
 
 // Generic global translation
 export const general: Partial<TypeOptions["resources"]["general"]> = {
-  foxglove: "Octaview",
+  foxglove: "octaview",
   learnMore: "もっと学ぶ",
 };

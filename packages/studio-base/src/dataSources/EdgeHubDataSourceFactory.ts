@@ -9,7 +9,7 @@ import {
 import FoxgloveWebSocketPlayer from "@foxglove/studio-base/players/FoxgloveWebSocketPlayer";
 import { Player } from "@foxglove/studio-base/players/types";
 
-// QR Code schema for Octaview Edge Hub:
+// QR Code schema for octaview Edge Hub:
 //   octaview://<ip>:<port>/<token>
 //
 // Example:
@@ -20,9 +20,9 @@ import { Player } from "@foxglove/studio-base/players/types";
 export default class EdgeHubDataSourceFactory implements IDataSourceFactory {
   public id = "octaview-edge-hub";
   public type: IDataSourceFactory["type"] = "connection";
-  public displayName = "Octaview Edge Hub";
+  public displayName = "octaview Edge Hub";
   public iconName: IDataSourceFactory["iconName"] = "Flow";
-  public description = "Connect to an Octaview Edge Hub on your local network.";
+  public description = "Connect to an octaview Edge Hub on your local network.";
   public docsLinks = [];
 
   public formConfig = {

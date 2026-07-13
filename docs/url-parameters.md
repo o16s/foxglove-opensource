@@ -1,6 +1,6 @@
-# Octaview Studio URL Parameters
+# octaview Studio URL Parameters
 
-Complete reference for all URL query parameters accepted by Octaview Studio.
+Complete reference for all URL query parameters accepted by octaview Studio.
 
 ## Server Authentication
 
@@ -166,7 +166,7 @@ Use `ds` to auto-connect to a data source on page load. Source-specific paramete
 /?ds=foxglove-websocket&ds.url=wss://192.168.1.100:8765&ds.token=abc123
 ```
 
-#### `octaview-edge-hub` — Octaview Edge Hub
+#### `octaview-edge-hub` — octaview Edge Hub
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
@@ -237,10 +237,56 @@ These are served by the Go server (`cmd/foxglove-server/main.go`), enabled when 
 |--------|------|-------------|
 | GET | `/api/mcap/files` | List all MCAP files (JSON array) |
 | GET | `/api/mcap/files/<path>` | Serve an individual MCAP file (supports HTTP Range requests) |
-| GET | `/api/mcap/index` | Stream NDJSON index with time ranges per file |
+| GET | `/api/mcap/index` | Stream NDJSON index with time ranges per file. Optional `?start=<unix>&end=<unix>` filters to files overlapping that window. |
+| GET | `/api/mcap/video/<path>` | Remux an H.264 video topic from an MCAP file to streamable MP4 |
 | GET | `/api/downloads` | List desktop installer files (JSON array, requires `--downloads-path`) |
 | GET | `/api/downloads/<filename>` | Serve a desktop installer file |
 | GET | `/` | Serve the web app (SPA with HTML5 history fallback) |
+
+### Video Export: `/api/mcap/video/<path>`
+
+Extracts an H.264 `foxglove.CompressedVideo` topic from an MCAP file and streams it as a browser-playable MP4. **No re-encoding** — the existing H.264 frames are remuxed into a fragmented MP4 container via ffmpeg, which is near-zero CPU cost.
+
+Requires `ffmpeg` to be installed on the server.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `topic` | Yes | The video topic to extract (e.g. `/camera/compressed_video`) |
+| `start` | No | Start time as Unix seconds (float). Only include frames at or after this time. |
+| `end` | No | End time as Unix seconds (float). Only include frames before this time. |
+
+Response: `Content-Type: video/mp4` — fragmented MP4 streamed progressively (playable before download completes).
+
+**Examples:**
+
+Full file, single topic:
+```
+/api/mcap/video/sensingcam/live-stream/sick2.mcap?topic=/camera/compressed_video
+```
+
+Time-range clip:
+```
+/api/mcap/video/sensingcam/live-stream/sick2.mcap?topic=/camera/compressed_video&start=1752392876.5&end=1752393000.0
+```
+
+With authentication:
+```
+/api/mcap/video/sensingcam/live-stream/sick2.mcap?topic=/camera/compressed_video&token=YOUR_TOKEN
+```
+
+Open directly in a browser or use in an HTML `<video>` tag:
+```html
+<video controls autoplay>
+  <source src="/api/mcap/video/recording.mcap?topic=/cam0/h264" type="video/mp4">
+</video>
+```
+
+**Notes:**
+- Supports both `protobuf` and `cdr` (ROS 2) message encodings
+- Multiple parallel requests are safe — each spawns its own ffmpeg process
+- FPS is auto-detected from message timestamps
+- If the client disconnects, the ffmpeg process is cleaned up automatically
+- `<path>` is relative to the `--mcap-path` directory (absolute paths are also accepted)
 
 ## Server CLI Flags
 

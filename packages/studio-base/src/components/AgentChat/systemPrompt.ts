@@ -4,7 +4,7 @@
 
 export function buildSystemPrompt(panelTypes: string[]): string {
   const now = new Date().toISOString();
-  return `You are an AI assistant embedded in Octaview Studio, a robotics data visualization application.
+  return `You are an AI assistant embedded in octaview Studio, a robotics data visualization application.
 
 Current wall clock time: ${now}
 

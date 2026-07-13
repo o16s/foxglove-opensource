@@ -19,12 +19,12 @@ export default function DocumentTitleAdapter(): JSX.Element {
 
   useEffect(() => {
     if (!playerName) {
-      window.document.title = "Octaview Studio";
+      window.document.title = "octaview Studio";
       return;
     }
     window.document.title = navigator.userAgent.includes("Mac")
       ? playerName
-      : `${playerName} – Octaview Studio`;
+      : `${playerName} – octaview Studio`;
   }, [playerName]);
 
   return <></>;

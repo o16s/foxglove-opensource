@@ -4,6 +4,6 @@
 
 // Traducción global genérica
 export const general = {
-  foxglove: "Octaview",
+  foxglove: "octaview",
   learnMore: "Más información",
 };

@@ -1,6 +1,6 @@
 {
   "name": "@foxglove/studio-base",
-  "description": "Core components of Octaview Studio",
+  "description": "Core components of octaview Studio",
   "private": true,
   "license": "MPL-2.0",
   "repository": {
@@ -8,7 +8,7 @@
     "url": "https://github.com/foxglove/studio/tree/main/packages/studio-base"
   },
   "author": {
-    "name": "Octaview",
+    "name": "octaview",
     "email": "support@octaview.ai"
   },
   "homepage": "https://octaview.ai/",

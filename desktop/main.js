@@ -31,7 +31,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
-    title: "Octaview Studio",
+    title: "octaview Studio",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

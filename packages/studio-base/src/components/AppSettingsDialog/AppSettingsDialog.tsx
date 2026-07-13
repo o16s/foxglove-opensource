@@ -155,7 +155,7 @@ function getAboutItems(lang: string) {
       {
         subheader: "Products",
         links: [
-          { title: "Octaview Studio", url: "https://octaview.ai" },
+          { title: "octaview Studio", url: "https://octaview.ai" },
         ],
       },
     ],
@@ -318,7 +318,7 @@ export function AppSettingsDialog(
               </header>
               <Stack direction="row" alignItems="center" gap={1}>
                 <Typography variant="body2">
-                  Octaview Studio version {FOXGLOVE_STUDIO_VERSION}
+                  octaview Studio version {FOXGLOVE_STUDIO_VERSION}
                 </Typography>
                 <CopyButton
                   size="small"

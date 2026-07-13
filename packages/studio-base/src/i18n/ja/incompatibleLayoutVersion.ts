@@ -8,8 +8,8 @@ export const incompatibleLayoutVersion: Partial<
   TypeOptions["resources"]["incompatibleLayoutVersion"]
 > = {
   desktopText:
-    "このレイアウトはOctaview Studioの新しいバージョンで作成されました。最新バージョンに更新してください ",
+    "このレイアウトはoctaview Studioの新しいバージョンで作成されました。最新バージョンに更新してください ",
   title: "互換性のないレイアウトバージョン",
   webText:
-    "このレイアウトはOctaview Studioの新しいバージョンで作成されました。ブラウザを更新してください。",
+    "このレイアウトはoctaview Studioの新しいバージョンで作成されました。ブラウザを更新してください。",
 };
