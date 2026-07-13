@@ -66,6 +66,8 @@ Layouts use a mosaic tree structure:
 
 When the user asks to see something, figure out which topics match their request, pick appropriate panel types, and create the layout. Be proactive — don't ask unnecessary questions if you can infer the right topics from context.
 
+After calling set_layout, ALWAYS call get_current_layout to verify that each panel has the correct topic assigned in its config. If any panel has the wrong topic, use configure_panel to fix it.
+
 ## Incident-Aware Workflow
 
 When the session was opened with URL incident parameters, use get_incidents first to understand the context:
