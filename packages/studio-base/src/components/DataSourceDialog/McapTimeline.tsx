@@ -103,7 +103,8 @@ type DownloadProgress = {
 
 const ROW_HEIGHT = 12;
 const HEADER_HEIGHT = 40;
-const LABEL_WIDTH = 180;
+const DEFAULT_LABEL_WIDTH = 180;
+const MIN_LABEL_WIDTH = 80;
 const BAR_HEIGHT = 10;
 const BAR_Y_OFFSET = (ROW_HEIGHT - BAR_HEIGHT) / 2;
 const MIN_BAR_WIDTH = 4;
@@ -187,10 +188,20 @@ const useStyles = makeStyles()((theme) => ({
     position: "relative",
   },
   labelColumn: {
-    width: LABEL_WIDTH,
-    minWidth: LABEL_WIDTH,
     flexShrink: 0,
+    position: "relative" as const,
+  },
+  labelDragHandle: {
+    position: "absolute" as const,
+    top: 0,
+    right: 0,
+    width: 4,
+    height: "100%",
+    cursor: "col-resize",
     borderRight: `1px solid ${theme.palette.divider}`,
+    "&:hover": {
+      borderRight: `2px solid ${theme.palette.primary.main}`,
+    },
   },
   labelHeader: {
     height: HEADER_HEIGHT,
@@ -337,6 +348,24 @@ export default function McapTimeline(): JSX.Element {
   useEffect(() => {
     setSelectedRows(new Set(allFolders));
   }, [allFolders]);
+
+  // Resizable label column
+  const [labelWidth, setLabelWidth] = useState(DEFAULT_LABEL_WIDTH);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const delta = e.clientX - dragRef.current.startX;
+      setLabelWidth(Math.max(MIN_LABEL_WIDTH, dragRef.current.startWidth + delta));
+    };
+    const onMouseUp = () => { dragRef.current = null; };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
 
   // Click selection state
   const [selCenter, setSelCenter] = useState<number | undefined>();
@@ -1140,7 +1169,7 @@ export default function McapTimeline(): JSX.Element {
         {/* Timeline */}
         {files.length > 0 && <div ref={wrapperRef} className={classes.timelineWrapper}>
           {/* Left: folder labels */}
-          <div className={classes.labelColumn}>
+          <div className={classes.labelColumn} style={{ width: labelWidth, minWidth: labelWidth }}>
             <div className={classes.labelHeader}>
               <Typography variant="caption" fontWeight={600} sx={{ flexGrow: 1 }}>
                 Folder
@@ -1216,6 +1245,13 @@ export default function McapTimeline(): JSX.Element {
                 </div>
               );
             })}
+            <div
+              className={classes.labelDragHandle}
+              onMouseDown={(e) => {
+                dragRef.current = { startX: e.clientX, startWidth: labelWidth };
+                e.preventDefault();
+              }}
+            />
           </div>
 
           {/* Right: SVG timeline */}
