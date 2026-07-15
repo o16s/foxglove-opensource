@@ -67,9 +67,15 @@ const SEVERITY_COLORS: Record<string, string> = {
 
 const INCIDENT_ROW_HEIGHT = 28;
 
-function parseUrlIncidents(): { centerTime?: number; incidents: Incident[] } {
+type ParsedSparklinePath = { topic: string; field: string };
+
+function parseUrlParams(): {
+  centerTime?: number;
+  incidents: Incident[];
+  sparklinePaths: ParsedSparklinePath[];
+} {
   if (typeof window === "undefined") {
-    return { incidents: [] };
+    return { incidents: [], sparklinePaths: [] };
   }
   const params = new URLSearchParams(window.location.search);
   const tParam = params.get("t");
@@ -91,7 +97,27 @@ function parseUrlIncidents(): { centerTime?: number; incidents: Incident[] } {
     }
   }
 
-  return { centerTime: centerTime != null && !isNaN(centerTime) ? centerTime : undefined, incidents };
+  // Parse sparklines param: comma-separated message paths like /topic.field
+  const sparklinePaths: ParsedSparklinePath[] = [];
+  const splParam = params.get("sparklines");
+  if (splParam) {
+    for (const raw of splParam.split(",")) {
+      const path = raw.trim().replace(/^\//, ""); // strip leading /
+      const dotIdx = path.indexOf(".");
+      if (dotIdx > 0 && dotIdx < path.length - 1) {
+        sparklinePaths.push({
+          topic: path.slice(0, dotIdx),
+          field: path.slice(dotIdx + 1),
+        });
+      }
+    }
+  }
+
+  return {
+    centerTime: centerTime != null && !isNaN(centerTime) ? centerTime : undefined,
+    incidents,
+    sparklinePaths,
+  };
 }
 
 type ViewMode = "day" | "week" | "month";
@@ -508,7 +534,7 @@ export default function McapTimeline(): JSX.Element {
   const [excludedFiles, setExcludedFiles] = useState<Set<string>>(new Set());
 
   // URL-driven incidents
-  const urlParams = useMemo(() => parseUrlIncidents(), []);
+  const urlParams = useMemo(() => parseUrlParams(), []);
   const incidents = urlParams.incidents;
   const hasIncidents = incidents.length > 0;
 
@@ -641,6 +667,30 @@ export default function McapTimeline(): JSX.Element {
     }
     return sorted;
   }, [files]);
+
+  // Apply URL sparklines when folders become available
+  const urlSparklineApplied = useRef(false);
+  useEffect(() => {
+    if (urlSparklineApplied.current || urlParams.sparklinePaths.length === 0 || folders.length === 0) {
+      return;
+    }
+    urlSparklineApplied.current = true;
+    setSparklineConfigs((prev) => {
+      const next = new Map(prev);
+      for (const [folderName] of folders) {
+        const existing = next.get(folderName) ?? [];
+        for (const { topic, field } of urlParams.sparklinePaths) {
+          if (!existing.some((s) => s.topic === topic && s.field === field)) {
+            existing.push({ topic, field, type: "number" });
+          }
+        }
+        if (existing.length > 0) {
+          next.set(folderName, existing);
+        }
+      }
+      return next;
+    });
+  }, [folders, urlParams.sparklinePaths]);
 
   const viewEnd = viewStart + viewDuration;
 
