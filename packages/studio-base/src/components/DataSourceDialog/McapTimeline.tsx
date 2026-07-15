@@ -101,10 +101,10 @@ type DownloadProgress = {
   grandTotal: number;
 };
 
-const ROW_HEIGHT = 36;
+const ROW_HEIGHT = 12;
 const HEADER_HEIGHT = 40;
 const LABEL_WIDTH = 180;
-const BAR_HEIGHT = 20;
+const BAR_HEIGHT = 10;
 const BAR_Y_OFFSET = (ROW_HEIGHT - BAR_HEIGHT) / 2;
 const MIN_BAR_WIDTH = 4;
 const DEFAULT_SELECTION_SPAN_MIN = 5;
@@ -331,8 +331,12 @@ export default function McapTimeline(): JSX.Element {
   const [indexProgress, setIndexProgress] = useState<{ indexed: number; total: number } | undefined>();
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // All folder rows are always selected
-  const selectedRows = useMemo(() => new Set(files.map((f) => f.folder || "(root)")), [files]);
+  // Folder selection state — initialized with all folders, togglable via checkboxes
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const allFolders = useMemo(() => new Set(files.map((f) => f.folder || "(root)")), [files]);
+  useEffect(() => {
+    setSelectedRows(new Set(allFolders));
+  }, [allFolders]);
 
   // Click selection state
   const [selCenter, setSelCenter] = useState<number | undefined>();
@@ -747,10 +751,10 @@ export default function McapTimeline(): JSX.Element {
     });
   }, [files, selectionRange, selectedRows]);
 
-  // Reset excluded files when the time selection changes
+  // Reset excluded files when the time selection or folder selection changes
   useEffect(() => {
     setExcludedFiles(new Set());
-  }, [selCenter]);
+  }, [selCenter, selectedRows]);
 
   // Files after user exclusions via dropdown
   const effectiveFiles = useMemo(
@@ -1138,9 +1142,23 @@ export default function McapTimeline(): JSX.Element {
           {/* Left: folder labels */}
           <div className={classes.labelColumn}>
             <div className={classes.labelHeader}>
-              <Typography variant="caption" fontWeight={600}>
+              <Typography variant="caption" fontWeight={600} sx={{ flexGrow: 1 }}>
                 Folder
               </Typography>
+              <Link
+                component="button"
+                variant="caption"
+                underline="hover"
+                onClick={() => {
+                  if (selectedRows.size === allFolders.size) {
+                    setSelectedRows(new Set());
+                  } else {
+                    setSelectedRows(new Set(allFolders));
+                  }
+                }}
+              >
+                {selectedRows.size === allFolders.size ? "Deselect all" : "Select all"}
+              </Link>
             </div>
             {hasIncidents && (
               <div
@@ -1165,24 +1183,34 @@ export default function McapTimeline(): JSX.Element {
             )}
             {folders.map(([folderName], i) => {
               const { laneCount } = folderLanes[i]!;
+              const folderColor = COLORS[i % COLORS.length]!;
+              const isChecked = selectedRows.has(folderName);
               return (
                 <div
                   key={folderName}
                   className={classes.labelRow}
-                  style={{ height: laneCount * ROW_HEIGHT, cursor: "default" }}
+                  style={{ height: laneCount * ROW_HEIGHT, cursor: "pointer" }}
+                  onClick={() => {
+                    setSelectedRows((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(folderName)) {
+                        next.delete(folderName);
+                      } else {
+                        next.add(folderName);
+                      }
+                      return next;
+                    });
+                  }}
                 >
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      backgroundColor: COLORS[i % COLORS.length],
-                      marginRight: 8,
-                      flexShrink: 0,
-                      display: "inline-block",
+                  <Checkbox
+                    checked={isChecked}
+                    size="small"
+                    sx={{
+                      p: 0, mr: 0.5, color: folderColor,
+                      "&.Mui-checked": { color: folderColor },
                     }}
                   />
-                  <Typography variant="body2" noWrap title={folderName}>
+                  <Typography variant="caption" noWrap title={folderName}>
                     {folderName}
                   </Typography>
                 </div>
