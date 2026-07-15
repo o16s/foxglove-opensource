@@ -13,7 +13,7 @@ import { v4 as uuidv4 } from "uuid";
 import { debouncePromise } from "@foxglove/den/async";
 import { filterMap } from "@foxglove/den/collection";
 import { parseMessagePath } from "@foxglove/message-path";
-import { add as addTimes, fromSec, isTime, toSec } from "@foxglove/rostime";
+import { add as addTimes, fromSec, isTime, toSec, Time } from "@foxglove/rostime";
 import { Immutable } from "@foxglove/studio";
 import KeyListener from "@foxglove/studio-base/components/KeyListener";
 import { fillInGlobalVariablesInPath } from "@foxglove/studio-base/components/MessagePathSyntax/useCachedGetMessagePathDataItems";
@@ -106,6 +106,7 @@ type ElementAtPixelArgs = {
 
 const selectGlobalBounds = (store: TimelineInteractionStateStore) => store.globalBounds;
 const selectSetGlobalBounds = (store: TimelineInteractionStateStore) => store.setGlobalBounds;
+const selectStartTime = (ctx: MessagePipelineContext) => ctx.playerState.activeData?.startTime;
 
 export function Plot(props: Props): JSX.Element {
   const { saveConfig, config } = props;
@@ -235,6 +236,7 @@ export function Plot(props: Props): JSX.Element {
     ),
   );
   const subscribeMessagePipeline = useMessagePipelineSubscribe();
+  const startTime: Time | undefined = useMessagePipeline(selectStartTime);
 
   const { globalVariables } = useGlobalVariables();
 
@@ -488,8 +490,27 @@ export function Plot(props: Props): JSX.Element {
     if (!activeTooltip) {
       return undefined;
     }
+
+    let wallClockLabel: string | undefined;
+    if (xAxisMode === "timestamp" && activeTooltip.cursorTime != undefined && startTime) {
+      const wallClockMs = (toSec(startTime) + activeTooltip.cursorTime) * 1000;
+      const date = new Date(wallClockMs);
+      wallClockLabel = date.toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        fractionalSecondDigits: 3,
+        hour12: false,
+      } as Intl.DateTimeFormatOptions);
+    }
+
     return (
       <>
+        {wallClockLabel != undefined && (
+          <div style={{ fontFamily: "monospace", marginBottom: 4, borderBottom: "1px solid currentColor", paddingBottom: 4 }}>
+            {wallClockLabel}
+          </div>
+        )}
         <TimeBasedChartTooltipContent
           content={activeTooltip.data}
           multiDataset={numSeries > 1}
@@ -503,7 +524,7 @@ export function Plot(props: Props): JSX.Element {
         ))}
       </>
     );
-  }, [activeTooltip, colorsByDatasetIndex, labelsByDatasetIndex, numSeries, activeAnnotationLabels]);
+  }, [activeTooltip, colorsByDatasetIndex, labelsByDatasetIndex, numSeries, activeAnnotationLabels, xAxisMode, startTime]);
 
   // panning
   useEffect(() => {

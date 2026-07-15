@@ -71,7 +71,25 @@ export type UpdateAction = {
   referenceLines?: { color: string; value: number }[];
   boxAnnotations?: { xMin: number; xMax: number; label: string; color: string }[];
   interactionEvents?: InteractionEvent[];
+  startTimeSec?: number;
 };
+
+function formatWallClockTick(elapsedSec: number, startTimeSec: number, rangeSeconds: number): string {
+  const date = new Date((startTimeSec + elapsedSec) * 1000);
+  if (rangeSeconds < 300) {
+    // Under 5 minutes: show HH:mm:ss
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  } else if (rangeSeconds < 86400) {
+    // Under 1 day: show HH:mm
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  } else {
+    // 1 day or more: show MM-DD HH:mm
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${month}-${day} ${time}`;
+  }
+}
 
 function addEventListener(emitter: EventEmitter) {
   return (eventName: string, fn?: () => void) => {
@@ -119,6 +137,7 @@ export class ChartRenderer {
   #chartInstance: ChartType;
   #fakeNodeEvents = new EventEmitter();
   #fakeDocumentEvents = new EventEmitter();
+  #startTimeSec: number | undefined;
 
   public constructor(args: {
     canvas: OffscreenCanvas;
@@ -272,6 +291,20 @@ export class ChartRenderer {
       const ticksOptions = this.#chartInstance.options.scales?.x?.ticks;
       if (ticksOptions) {
         ticksOptions.display = action.showXAxisLabels;
+      }
+    }
+
+    if (action.startTimeSec != undefined) {
+      this.#startTimeSec = action.startTimeSec;
+      const ticksOptions = this.#chartInstance.options.scales?.x?.ticks;
+      if (ticksOptions) {
+        const startTimeSec = this.#startTimeSec;
+        ticksOptions.callback = function (tickValue) {
+          const elapsedSec = typeof tickValue === "number" ? tickValue : Number(tickValue);
+          const scale = this;
+          const rangeSeconds = scale.max - scale.min;
+          return formatWallClockTick(elapsedSec, startTimeSec, rangeSeconds);
+        };
       }
     }
 

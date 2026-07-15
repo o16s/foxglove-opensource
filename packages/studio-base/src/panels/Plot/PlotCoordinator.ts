@@ -81,6 +81,7 @@ export class PlotCoordinator extends EventEmitter<EventTypes> {
 
   #isTimeseriesPlot: boolean = false;
   #currentSeconds?: number;
+  #startTimeSec?: number;
 
   #viewport: Viewport = {
     size: { width: 0, height: 0 },
@@ -124,6 +125,12 @@ export class PlotCoordinator extends EventEmitter<EventTypes> {
     if (this.#isTimeseriesPlot) {
       const secondsSinceStart = toSec(subtractTime(currentTime, startTime));
       this.#currentSeconds = secondsSinceStart;
+
+      const newStartTimeSec = toSec(startTime);
+      if (newStartTimeSec !== this.#startTimeSec) {
+        this.#startTimeSec = newStartTimeSec;
+        this.#updateAction.startTimeSec = newStartTimeSec;
+      }
     }
 
     if (lastSeekTime !== this.#lastSeekTime) {
