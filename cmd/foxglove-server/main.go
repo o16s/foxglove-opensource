@@ -19,17 +19,21 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/foxglove/mcap/go/mcap"
+	"github.com/tidwall/gjson"
 	_ "modernc.org/sqlite"
 )
 
@@ -57,6 +61,13 @@ type McapTopicInfo struct {
 	Topic           string `json:"topic"`
 	SchemaName      string `json:"schemaName"`
 	MessageEncoding string `json:"messageEncoding"`
+	MessageCount    uint64 `json:"messageCount,omitempty"`
+}
+
+type McapFieldInfo struct {
+	Topic string `json:"topic"`
+	Field string `json:"field"`
+	Type  string `json:"type"` // "number", "boolean", "string"
 }
 
 // openIndexDB opens (or creates) a SQLite database at dbPath and ensures
@@ -86,12 +97,41 @@ func openIndexDB(dbPath string) (*sql.DB, error) {
 		topic            TEXT NOT NULL,
 		schema_name      TEXT NOT NULL DEFAULT '',
 		message_encoding TEXT NOT NULL DEFAULT '',
+		message_count    INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (path, topic)
 	)`)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create topics table: %w", err)
 	}
+	// Migration: add message_count column if it doesn't exist (ignores error if already present)
+	db.Exec(`ALTER TABLE mcap_topics ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0`)
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS mcap_fields (
+		file_path  TEXT NOT NULL,
+		topic      TEXT NOT NULL,
+		field_name TEXT NOT NULL,
+		field_type TEXT NOT NULL,
+		PRIMARY KEY (file_path, topic, field_name)
+	)`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create fields table: %w", err)
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS mcap_samples (
+		file_path   TEXT NOT NULL,
+		topic       TEXT NOT NULL,
+		field       TEXT NOT NULL,
+		decimation  INTEGER NOT NULL,
+		timestamp_ns INTEGER NOT NULL,
+		value       REAL NOT NULL,
+		PRIMARY KEY (file_path, topic, field, decimation, timestamp_ns)
+	)`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create samples table: %w", err)
+	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_samples_lookup ON mcap_samples(file_path, topic, field, decimation)`)
 	return db, nil
 }
 
@@ -129,6 +169,9 @@ func getMcapSummary(path string) (mcapSummary, error) {
 			}
 			if schema, ok := info.Schemas[ch.SchemaID]; ok {
 				ti.SchemaName = schema.Name
+			}
+			if info.Statistics != nil {
+				ti.MessageCount = info.Statistics.ChannelMessageCounts[ch.ID]
 			}
 			topics = append(topics, ti)
 		}
@@ -221,6 +264,284 @@ func getMcapTimeRangeFromChunks(path string) (startNs, endNs uint64, err error) 
 		return 0, 0, fmt.Errorf("no chunks found in file")
 	}
 	return startNs, endNs, nil
+}
+
+// classifyJSONValue returns the type string for a JSON value (for field indexing).
+func classifyJSONValue(v interface{}) string {
+	switch v.(type) {
+	case float64:
+		return "number"
+	case bool:
+		return "boolean"
+	case string:
+		return "string"
+	default:
+		return ""
+	}
+}
+
+// flattenJSON flattens a JSON object with dot-separated keys. Only leaf values are included.
+func flattenJSON(prefix string, obj map[string]interface{}, out map[string]interface{}) {
+	for k, v := range obj {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		if nested, ok := v.(map[string]interface{}); ok {
+			flattenJSON(key, nested, out)
+		} else {
+			out[key] = v
+		}
+	}
+}
+
+// indexFieldsForFile reads one message per jsonschema topic in an MCAP file
+// and caches field names/types in the SQLite database.
+func indexFieldsForFile(db *sql.DB, filePath, absBasePath string, topics []McapTopicInfo) {
+	if db == nil {
+		return
+	}
+	// Filter to jsonschema topics only
+	var jsonTopics []string
+	for _, t := range topics {
+		if t.MessageEncoding == "json" || t.MessageEncoding == "jsonschema" {
+			jsonTopics = append(jsonTopics, t.Topic)
+		}
+	}
+	if len(jsonTopics) == 0 {
+		return
+	}
+
+	fullPath := filepath.Join(absBasePath, filePath)
+	f, err := os.Open(fullPath)
+	if err != nil {
+		log.Printf("Warning: could not open %s for field indexing: %v", filePath, err)
+		return
+	}
+	defer f.Close()
+
+	reader, err := mcap.NewReader(f)
+	if err != nil {
+		log.Printf("Warning: could not read %s for field indexing: %v", filePath, err)
+		return
+	}
+	defer reader.Close()
+
+	it, err := reader.Messages(mcap.WithTopics(jsonTopics))
+	if err != nil {
+		log.Printf("Warning: could not iterate %s for field indexing: %v", filePath, err)
+		return
+	}
+
+	seen := make(map[string]bool) // track which topics we've already indexed
+	tx, txErr := db.Begin()
+	if txErr != nil {
+		return
+	}
+	stmt, stmtErr := tx.Prepare(`INSERT OR IGNORE INTO mcap_fields (file_path, topic, field_name, field_type) VALUES (?, ?, ?, ?)`)
+	if stmtErr != nil {
+		tx.Rollback()
+		return
+	}
+	defer stmt.Close()
+
+	for {
+		_, channel, msg, err := it.Next(nil)
+		if err != nil {
+			break
+		}
+		if seen[channel.Topic] {
+			continue
+		}
+		seen[channel.Topic] = true
+
+		// Parse the JSON message
+		var raw map[string]interface{}
+		if jsonErr := json.Unmarshal(msg.Data, &raw); jsonErr != nil {
+			continue
+		}
+		flat := make(map[string]interface{})
+		flattenJSON("", raw, flat)
+		for fieldName, fieldVal := range flat {
+			fieldType := classifyJSONValue(fieldVal)
+			if fieldType != "" {
+				stmt.Exec(filePath, channel.Topic, fieldName, fieldType)
+			}
+		}
+
+		if len(seen) >= len(jsonTopics) {
+			break
+		}
+	}
+	tx.Commit()
+}
+
+// minMaxDownsample reduces a time series to maxPoints using min-max bucketing.
+// Each bucket produces 2 points (min and max), preserving peaks and troughs.
+func minMaxDownsample(timestamps, values []float64, maxPoints int) ([]float64, []float64) {
+	n := len(timestamps)
+	if n <= maxPoints || maxPoints < 4 {
+		return timestamps, values
+	}
+	buckets := maxPoints / 2
+	bucketSize := float64(n) / float64(buckets)
+	outT := make([]float64, 0, maxPoints)
+	outV := make([]float64, 0, maxPoints)
+	for i := 0; i < buckets; i++ {
+		start := int(float64(i) * bucketSize)
+		end := int(float64(i+1) * bucketSize)
+		if end > n {
+			end = n
+		}
+		if start >= end {
+			continue
+		}
+		minIdx, maxIdx := start, start
+		for j := start + 1; j < end; j++ {
+			if values[j] < values[minIdx] {
+				minIdx = j
+			}
+			if values[j] > values[maxIdx] {
+				maxIdx = j
+			}
+		}
+		// Output min before max (in time order)
+		if minIdx <= maxIdx {
+			outT = append(outT, timestamps[minIdx], timestamps[maxIdx])
+			outV = append(outV, values[minIdx], values[maxIdx])
+		} else {
+			outT = append(outT, timestamps[maxIdx], timestamps[minIdx])
+			outV = append(outV, values[maxIdx], values[minIdx])
+		}
+	}
+	return outT, outV
+}
+
+// sampleSemaphore limits concurrent MCAP file reads (important for ARM/low-memory)
+var sampleSemaphore = make(chan struct{}, 2)
+
+// sampleFieldFromFile reads sampled values for a single field from an MCAP file.
+// It checks the SQLite cache first, falling back to reading the MCAP file.
+func sampleFieldFromFile(
+	db *sql.DB, filePath, absBasePath, topic, field string,
+	startNs, endNs uint64, decimation int,
+	done <-chan struct{},
+) (timestamps []float64, values []float64, err error) {
+	// Try cache first
+	if db != nil {
+		rows, qErr := db.Query(
+			`SELECT timestamp_ns, value FROM mcap_samples
+			 WHERE file_path=? AND topic=? AND field=? AND decimation=?
+			   AND timestamp_ns >= ? AND timestamp_ns <= ?
+			 ORDER BY timestamp_ns`,
+			filePath, topic, field, decimation, startNs, endNs,
+		)
+		if qErr == nil {
+			for rows.Next() {
+				var ts int64
+				var v float64
+				if rows.Scan(&ts, &v) == nil {
+					timestamps = append(timestamps, float64(ts)/1e9)
+					values = append(values, v)
+				}
+			}
+			rows.Close()
+			if len(timestamps) > 0 {
+				return timestamps, values, nil
+			}
+		}
+	}
+
+	// Acquire semaphore (limit concurrent reads)
+	select {
+	case sampleSemaphore <- struct{}{}:
+		defer func() { <-sampleSemaphore }()
+	case <-done:
+		return nil, nil, fmt.Errorf("client disconnected")
+	}
+
+	fullPath := filepath.Join(absBasePath, filePath)
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+
+	reader, err := mcap.NewReader(f)
+	if err != nil {
+		return nil, nil, fmt.Errorf("mcap reader: %w", err)
+	}
+	defer reader.Close()
+
+	readOpts := []mcap.ReadOpt{
+		mcap.WithTopics([]string{topic}),
+		mcap.AfterNanos(startNs),
+		mcap.BeforeNanos(endNs),
+	}
+
+	it, err := reader.Messages(readOpts...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("messages: %w", err)
+	}
+
+	// Read with decimation
+	count := 0
+	var allTs []float64
+	var allVals []float64
+	for {
+		select {
+		case <-done:
+			return nil, nil, fmt.Errorf("client disconnected")
+		default:
+		}
+		_, _, msg, iterErr := it.Next(nil)
+		if iterErr != nil {
+			break
+		}
+		count++
+		if count%decimation != 0 {
+			continue
+		}
+		// Extract field value using gjson (fast, no full unmarshal)
+		result := gjson.GetBytes(msg.Data, field)
+		if !result.Exists() {
+			continue
+		}
+		var val float64
+		switch result.Type {
+		case gjson.Number:
+			val = result.Float()
+		case gjson.True:
+			val = 1.0
+		case gjson.False:
+			val = 0.0
+		default:
+			continue // skip strings and other types
+		}
+		ts := float64(msg.LogTime) / 1e9
+		allTs = append(allTs, ts)
+		allVals = append(allVals, val)
+	}
+
+	// Cache results in SQLite
+	if db != nil && len(allTs) > 0 {
+		tx, txErr := db.Begin()
+		if txErr == nil {
+			stmt, stmtErr := tx.Prepare(
+				`INSERT OR IGNORE INTO mcap_samples (file_path, topic, field, decimation, timestamp_ns, value) VALUES (?, ?, ?, ?, ?, ?)`,
+			)
+			if stmtErr == nil {
+				for i, ts := range allTs {
+					tsNs := int64(ts * 1e9)
+					stmt.Exec(filePath, topic, field, decimation, tsNs, allVals[i])
+				}
+				stmt.Close()
+			}
+			tx.Commit()
+		}
+	}
+
+	return allTs, allVals, nil
 }
 
 // extractProtobufBytesField extracts a length-delimited field by number from
@@ -791,12 +1112,12 @@ func main() {
 					cacheHit = true
 					// Load cached topics
 					if tRows, tErr := indexDB.Query(
-						`SELECT topic, schema_name, message_encoding FROM mcap_topics WHERE path = ?`,
+						`SELECT topic, schema_name, message_encoding, message_count FROM mcap_topics WHERE path = ?`,
 						entry.relPath,
 					); tErr == nil {
 						for tRows.Next() {
 							var ti McapTopicInfo
-							if tRows.Scan(&ti.Topic, &ti.SchemaName, &ti.MessageEncoding) == nil {
+							if tRows.Scan(&ti.Topic, &ti.SchemaName, &ti.MessageEncoding, &ti.MessageCount) == nil {
 								topics = append(topics, ti)
 							}
 						}
@@ -823,14 +1144,16 @@ func main() {
 					if indexErr != nil {
 						log.Printf("Warning: could not cache index for %s: %v", entry.relPath, indexErr)
 					}
-					// Cache topics
+					// Cache topics (with message counts)
 					indexDB.Exec(`DELETE FROM mcap_topics WHERE path = ?`, entry.relPath)
 					for _, ti := range topics {
 						indexDB.Exec(
-							`INSERT INTO mcap_topics (path, topic, schema_name, message_encoding) VALUES (?, ?, ?, ?)`,
-							entry.relPath, ti.Topic, ti.SchemaName, ti.MessageEncoding,
+							`INSERT INTO mcap_topics (path, topic, schema_name, message_encoding, message_count) VALUES (?, ?, ?, ?, ?)`,
+							entry.relPath, ti.Topic, ti.SchemaName, ti.MessageEncoding, ti.MessageCount,
 						)
 					}
+					// Index fields for jsonschema topics
+					indexFieldsForFile(indexDB, entry.relPath, absPath, topics)
 				}
 			}
 
@@ -879,6 +1202,8 @@ func main() {
 			for _, p := range stalePaths {
 				indexDB.Exec(`DELETE FROM mcap_index WHERE path = ?`, p)
 				indexDB.Exec(`DELETE FROM mcap_topics WHERE path = ?`, p)
+				indexDB.Exec(`DELETE FROM mcap_fields WHERE file_path = ?`, p)
+				indexDB.Exec(`DELETE FROM mcap_samples WHERE file_path = ?`, p)
 			}
 		}
 
@@ -1133,6 +1458,225 @@ func main() {
 		if err := cmd.Wait(); err != nil && ctx.Err() == nil {
 			log.Printf("ffmpeg error for %s topic=%s: %v\nstderr: %s", cleanPath, topic, err, stderrBuf.String())
 		}
+	})
+
+	// API: list plottable fields for a folder
+	// GET /api/mcap/fields?folder=<folder>[&plottable=true]
+	mux.HandleFunc("/api/mcap/fields", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		folder := r.URL.Query().Get("folder")
+		if folder == "" {
+			http.Error(w, "Missing required 'folder' query parameter", http.StatusBadRequest)
+			return
+		}
+		plottable := r.URL.Query().Get("plottable") != "false"
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		if indexDB == nil {
+			json.NewEncoder(w).Encode([]McapFieldInfo{})
+			return
+		}
+
+		// Match files in this folder (folder can be "" or "." for root)
+		var pathPattern string
+		if folder == "" || folder == "." || folder == "/" {
+			pathPattern = "%"
+		} else {
+			pathPattern = strings.TrimSuffix(folder, "/") + "/%"
+		}
+
+		query := `SELECT DISTINCT topic, field_name, field_type FROM mcap_fields WHERE file_path LIKE ?`
+		args := []interface{}{pathPattern}
+		if plottable {
+			query += ` AND field_type != 'string'`
+		}
+		query += ` ORDER BY topic, field_name`
+
+		rows, err := indexDB.Query(query, args...)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Query error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var fields []McapFieldInfo
+		for rows.Next() {
+			var fi McapFieldInfo
+			if rows.Scan(&fi.Topic, &fi.Field, &fi.Type) == nil {
+				fields = append(fields, fi)
+			}
+		}
+		if fields == nil {
+			fields = []McapFieldInfo{}
+		}
+		json.NewEncoder(w).Encode(fields)
+	})
+
+	// API: sample field values from MCAP files in a folder
+	// GET /api/mcap/sample?folder=<folder>&topic=<topic>&field=<field>&start=<unix_sec>&end=<unix_sec>[&decimation=10][&maxPoints=500]
+	mux.HandleFunc("/api/mcap/sample", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		q := r.URL.Query()
+		folder := q.Get("folder")
+		topic := q.Get("topic")
+		field := q.Get("field")
+		startStr := q.Get("start")
+		endStr := q.Get("end")
+
+		if folder == "" || topic == "" || field == "" || startStr == "" || endStr == "" {
+			http.Error(w, "Missing required parameters: folder, topic, field, start, end", http.StatusBadRequest)
+			return
+		}
+
+		startSec, err := strconv.ParseFloat(startStr, 64)
+		if err != nil {
+			http.Error(w, "Invalid 'start' parameter", http.StatusBadRequest)
+			return
+		}
+		endSec, err := strconv.ParseFloat(endStr, 64)
+		if err != nil {
+			http.Error(w, "Invalid 'end' parameter", http.StatusBadRequest)
+			return
+		}
+
+		decimation := 10
+		if d := q.Get("decimation"); d != "" {
+			if v, err := strconv.Atoi(d); err == nil && v > 0 {
+				decimation = v
+			}
+		}
+		maxPoints := 500
+		if m := q.Get("maxPoints"); m != "" {
+			if v, err := strconv.Atoi(m); err == nil && v > 0 {
+				maxPoints = v
+			}
+		}
+
+		startNs := uint64(startSec * 1e9)
+		endNs := uint64(endSec * 1e9)
+
+		// Find files in folder overlapping [startNs, endNs]
+		type fileEntry struct {
+			path    string
+			startNs uint64
+			endNs   uint64
+		}
+		var files []fileEntry
+
+		if indexDB != nil {
+			var pathPattern string
+			if folder == "" || folder == "." || folder == "/" {
+				pathPattern = "%"
+			} else {
+				pathPattern = strings.TrimSuffix(folder, "/") + "/%"
+			}
+			rows, err := indexDB.Query(
+				`SELECT path, start_time, end_time FROM mcap_index
+				 WHERE path LIKE ? AND end_time > ? AND start_time < ?
+				 ORDER BY start_time`,
+				pathPattern, startNs, endNs,
+			)
+			if err == nil {
+				for rows.Next() {
+					var fe fileEntry
+					if rows.Scan(&fe.path, &fe.startNs, &fe.endNs) == nil {
+						files = append(files, fe)
+					}
+				}
+				rows.Close()
+			}
+		}
+
+		if len(files) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			json.NewEncoder(w).Encode(map[string]interface{}{"segments": []interface{}{}})
+			return
+		}
+
+		// Sample each file concurrently (limited by sampleSemaphore)
+		type sampleSegment struct {
+			File       string    `json:"file"`
+			Timestamps []float64 `json:"timestamps"`
+			Values     []float64 `json:"values"`
+		}
+		type indexedSegment struct {
+			idx     int
+			segment sampleSegment
+			err     error
+		}
+
+		results := make(chan indexedSegment, len(files))
+		var wg sync.WaitGroup
+		done := r.Context().Done()
+		pointsPerFile := int(math.Max(float64(maxPoints)/float64(len(files)), 20))
+
+		for i, fe := range files {
+			wg.Add(1)
+			go func(idx int, fe fileEntry) {
+				defer wg.Done()
+				// Clamp the range to this file's time span
+				fStart := startNs
+				if fe.startNs > fStart {
+					fStart = fe.startNs
+				}
+				fEnd := endNs
+				if fe.endNs < fEnd {
+					fEnd = fe.endNs
+				}
+				ts, vals, err := sampleFieldFromFile(indexDB, fe.path, absPath, topic, field, fStart, fEnd, decimation, done)
+				if err != nil {
+					results <- indexedSegment{idx: idx, err: err}
+					return
+				}
+				// Downsample to fit in budget
+				ts, vals = minMaxDownsample(ts, vals, pointsPerFile)
+				results <- indexedSegment{
+					idx:     idx,
+					segment: sampleSegment{File: fe.path, Timestamps: ts, Values: vals},
+				}
+			}(i, fe)
+		}
+
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		segments := make([]sampleSegment, len(files))
+		for res := range results {
+			if res.err == nil && len(res.segment.Timestamps) > 0 {
+				segments[res.idx] = res.segment
+			}
+		}
+		// Filter out empty segments
+		var nonEmpty []sampleSegment
+		for _, s := range segments {
+			if len(s.Timestamps) > 0 {
+				nonEmpty = append(nonEmpty, s)
+			}
+		}
+		// Sort by first timestamp
+		sort.Slice(nonEmpty, func(i, j int) bool {
+			return nonEmpty[i].Timestamps[0] < nonEmpty[j].Timestamps[0]
+		})
+
+		if nonEmpty == nil {
+			nonEmpty = []sampleSegment{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		json.NewEncoder(w).Encode(map[string]interface{}{"segments": nonEmpty})
 	})
 
 	} // end if absPath != ""

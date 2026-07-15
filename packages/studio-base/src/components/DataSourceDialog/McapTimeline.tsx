@@ -6,12 +6,15 @@ import AddIcon from "@mui/icons-material/Add";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import CloseIcon from "@mui/icons-material/Close";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import RemoveIcon from "@mui/icons-material/Remove";
 import {
+  Autocomplete,
   Button,
   ButtonGroup,
   Checkbox,
+  Chip,
   CircularProgress,
   Divider,
   IconButton,
@@ -20,9 +23,11 @@ import {
   ListItemText,
   Menu,
   MenuItem,
+  Popover,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -101,7 +106,11 @@ type DownloadProgress = {
   grandTotal: number;
 };
 
+type SparklineField = { topic: string; field: string; type: string };
+type SparklineSegment = { file: string; timestamps: number[]; values: number[] };
+
 const ROW_HEIGHT = 12;
+const SPARKLINE_ROW_HEIGHT = 20;
 const HEADER_HEIGHT = 40;
 const DEFAULT_LABEL_WIDTH = 180;
 const MIN_LABEL_WIDTH = 80;
@@ -109,6 +118,7 @@ const BAR_HEIGHT = 10;
 const BAR_Y_OFFSET = (ROW_HEIGHT - BAR_HEIGHT) / 2;
 const MIN_BAR_WIDTH = 4;
 const DEFAULT_SELECTION_SPAN_MIN = 5;
+const SPARKLINE_STORAGE_KEY = "mcapTimeline.sparklines";
 const DOWNLOAD_CONCURRENCY = 4; // number of parallel file downloads
 const PROGRESS_THROTTLE_MS = 100; // minimum interval between progress UI updates
 
@@ -398,6 +408,92 @@ export default function McapTimeline(): JSX.Element {
   const svgColumnRef = useRef<HTMLDivElement>(null);
   const [svgColumnWidth, setSvgColumnWidth] = useState(0);
 
+  // Sparkline state
+  const [sparklineConfigs, setSparklineConfigs] = useState<Map<string, SparklineField[]>>(() => {
+    try {
+      const stored = localStorage.getItem(SPARKLINE_STORAGE_KEY);
+      if (stored) {
+        return new Map(JSON.parse(stored) as [string, SparklineField[]][]);
+      }
+    } catch { /* ignore */ }
+    return new Map();
+  });
+  const [sparklineData, setSparklineData] = useState<Map<string, SparklineSegment[]>>(new Map());
+  const [sparklinePopover, setSparklinePopover] = useState<{
+    anchorEl: HTMLElement;
+    folder: string;
+  } | null>(null);
+  const [sparklineFields, setSparklineFields] = useState<
+    { topic: string; field: string; type: string }[]
+  >([]);
+  const [sparklineFieldsLoading, setSparklineFieldsLoading] = useState(false);
+
+  // Persist sparkline configs
+  useEffect(() => {
+    const serialized = JSON.stringify([...sparklineConfigs]);
+    if (serialized != undefined) {
+      localStorage.setItem(SPARKLINE_STORAGE_KEY, serialized);
+    }
+  }, [sparklineConfigs]);
+
+  // Fetch field list when popover opens
+  useEffect(() => {
+    if (!sparklinePopover) {
+      return;
+    }
+    const controller = new AbortController();
+    setSparklineFieldsLoading(true);
+    setSparklineFields([]);
+    const folder = sparklinePopover.folder === "(root)" ? "." : sparklinePopover.folder;
+    fetch(`${apiBase}/api/mcap/fields?folder=${encodeURIComponent(folder)}&plottable=true`, {
+      signal: controller.signal,
+    })
+      .then((r) => r.json())
+      .then((data: { topic: string; field: string; type: string }[]) => {
+        setSparklineFields(data);
+        setSparklineFieldsLoading(false);
+      })
+      .catch((err) => {
+        if ((err as Error).name !== "AbortError") {
+          setSparklineFieldsLoading(false);
+        }
+      });
+    return () => { controller.abort(); };
+  }, [sparklinePopover, apiBase]);
+
+  // Fetch sparkline sample data (debounced on viewport change)
+  useEffect(() => {
+    if (sparklineConfigs.size === 0) {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      for (const [folder, fields] of sparklineConfigs) {
+        const folderParam = folder === "(root)" ? "." : folder;
+        for (const { topic, field } of fields) {
+          const key = `${folder}/${topic}/${field}`;
+          fetch(
+            `${apiBase}/api/mcap/sample?folder=${encodeURIComponent(folderParam)}&topic=${encodeURIComponent(topic)}&field=${encodeURIComponent(field)}&start=${viewStart}&end=${viewStart + viewDuration}&maxPoints=500&decimation=10`,
+            { signal: controller.signal },
+          )
+            .then((r) => r.json())
+            .then((data: { segments: SparklineSegment[] }) => {
+              setSparklineData((prev) => {
+                const next = new Map(prev);
+                next.set(key, data.segments);
+                return next;
+              });
+            })
+            .catch(() => { /* ignore aborts */ });
+        }
+      }
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [sparklineConfigs, viewStart, viewDuration, apiBase]);
+
   // Hover tooltip state
   const [tooltipState, setTooltipState] = useState<{
     file?: McapFileIndex;
@@ -584,19 +680,26 @@ export default function McapTimeline(): JSX.Element {
     return folders.map(([, folderFiles]) => assignLanes(folderFiles));
   }, [folders]);
 
-  // Cumulative Y offset per folder (each folder may have multiple lanes)
+  // Per-folder sparkline count
+  const folderSparklineCounts = useMemo(() => {
+    return folders.map(([folderName]) => sparklineConfigs.get(folderName)?.length ?? 0);
+  }, [folders, sparklineConfigs]);
+
+  // Cumulative Y offset per folder (each folder may have multiple lanes + sparklines)
   const folderYOffsets = useMemo(() => {
     const offsets: number[] = [];
     let y = 0;
-    for (const { laneCount } of folderLanes) {
+    for (let i = 0; i < folderLanes.length; i++) {
       offsets.push(y);
-      y += laneCount * ROW_HEIGHT;
+      y += folderLanes[i]!.laneCount * ROW_HEIGHT + folderSparklineCounts[i]! * SPARKLINE_ROW_HEIGHT;
     }
     return offsets;
-  }, [folderLanes]);
+  }, [folderLanes, folderSparklineCounts]);
 
   const totalRowsHeight = folderYOffsets.length > 0
-    ? folderYOffsets[folderYOffsets.length - 1]! + folderLanes[folderLanes.length - 1]!.laneCount * ROW_HEIGHT
+    ? folderYOffsets[folderYOffsets.length - 1]!
+      + folderLanes[folderLanes.length - 1]!.laneCount * ROW_HEIGHT
+      + folderSparklineCounts[folderSparklineCounts.length - 1]! * SPARKLINE_ROW_HEIGHT
     : 0;
 
   // SVG dimensions — add an incident row at top when incidents are present
@@ -1269,34 +1372,86 @@ export default function McapTimeline(): JSX.Element {
               const { laneCount } = folderLanes[i]!;
               const folderColor = COLORS[i % COLORS.length]!;
               const isChecked = selectedRows.has(folderName);
+              const sparklines = sparklineConfigs.get(folderName) ?? [];
               return (
-                <div
-                  key={folderName}
-                  className={classes.labelRow}
-                  style={{ height: laneCount * ROW_HEIGHT, cursor: "pointer" }}
-                  onClick={() => {
-                    setSelectedRows((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(folderName)) {
-                        next.delete(folderName);
-                      } else {
-                        next.add(folderName);
-                      }
-                      return next;
-                    });
-                  }}
-                >
-                  <Checkbox
-                    checked={isChecked}
-                    size="small"
-                    sx={{
-                      p: 0, mr: 0.5, color: folderColor,
-                      "&.Mui-checked": { color: folderColor },
+                <div key={folderName}>
+                  <div
+                    className={classes.labelRow}
+                    style={{ height: laneCount * ROW_HEIGHT, cursor: "pointer" }}
+                    onClick={() => {
+                      setSelectedRows((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(folderName)) {
+                          next.delete(folderName);
+                        } else {
+                          next.add(folderName);
+                        }
+                        return next;
+                      });
                     }}
-                  />
-                  <Typography variant="caption" noWrap title={folderName}>
-                    {folderName}
-                  </Typography>
+                  >
+                    <Checkbox
+                      checked={isChecked}
+                      size="small"
+                      sx={{
+                        p: 0, mr: 0.5, color: folderColor,
+                        "&.Mui-checked": { color: folderColor },
+                      }}
+                    />
+                    <Typography variant="caption" noWrap title={folderName} sx={{ flexGrow: 1 }}>
+                      {folderName}
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      sx={{ p: 0, ml: 0.25, opacity: 0.6, "&:hover": { opacity: 1 } }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSparklinePopover({ anchorEl: e.currentTarget, folder: folderName });
+                      }}
+                      title="Add sparkline"
+                    >
+                      <AddIcon sx={{ fontSize: 14 }} />
+                    </IconButton>
+                  </div>
+                  {/* Sparkline labels */}
+                  {sparklines.map(({ topic, field }) => (
+                    <div
+                      key={`${topic}/${field}`}
+                      className={classes.labelRow}
+                      style={{ height: SPARKLINE_ROW_HEIGHT, paddingLeft: 20, cursor: "default" }}
+                    >
+                      <Tooltip title={`${topic}.${field}`} placement="right">
+                        <Typography
+                          variant="caption"
+                          noWrap
+                          sx={{ fontSize: 9, opacity: 0.7, flexGrow: 1, color: folderColor }}
+                        >
+                          {field}
+                        </Typography>
+                      </Tooltip>
+                      <IconButton
+                        size="small"
+                        sx={{ p: 0, opacity: 0.4, "&:hover": { opacity: 1 } }}
+                        onClick={() => {
+                          setSparklineConfigs((prev) => {
+                            const next = new Map(prev);
+                            const list = (next.get(folderName) ?? []).filter(
+                              (s) => !(s.topic === topic && s.field === field),
+                            );
+                            if (list.length === 0) {
+                              next.delete(folderName);
+                            } else {
+                              next.set(folderName, list);
+                            }
+                            return next;
+                          });
+                        }}
+                        title="Remove sparkline"
+                      >
+                        <CloseIcon sx={{ fontSize: 10 }} />
+                      </IconButton>
+                    </div>
+                  ))}
                 </div>
               );
             })}
@@ -1334,13 +1489,15 @@ export default function McapTimeline(): JSX.Element {
               {/* Row backgrounds */}
               {folders.map(([folderName], i) => {
                 const { laneCount } = folderLanes[i]!;
+                const sparkCount = folderSparklineCounts[i]!;
+                const totalH = laneCount * ROW_HEIGHT + sparkCount * SPARKLINE_ROW_HEIGHT;
                 return (
                   <rect
                     key={folderName}
                     x={0}
                     y={incidentRowOffset + folderYOffsets[i]!}
                     width={svgWidth}
-                    height={laneCount * ROW_HEIGHT}
+                    height={totalH}
                     fill={i % 2 === 0 ? "transparent" : theme.palette.action.hover}
                   />
                 );
@@ -1360,7 +1517,7 @@ export default function McapTimeline(): JSX.Element {
 
               {/* Row dividers */}
               {folders.map(([folderName], i) => {
-                const divY = incidentRowOffset + folderYOffsets[i]! + folderLanes[i]!.laneCount * ROW_HEIGHT;
+                const divY = incidentRowOffset + folderYOffsets[i]! + folderLanes[i]!.laneCount * ROW_HEIGHT + folderSparklineCounts[i]! * SPARKLINE_ROW_HEIGHT;
                 return (
                   <line
                     key={`div-${folderName}`}
@@ -1409,6 +1566,111 @@ export default function McapTimeline(): JSX.Element {
                     strokeWidth={isFileSelected ? 2 : 0}
                   />
                 );
+              })}
+
+              {/* Sparklines */}
+              {folders.map(([folderName], folderIdx) => {
+                const sparklines = sparklineConfigs.get(folderName) ?? [];
+                if (sparklines.length === 0) {
+                  return null;
+                }
+                const { laneCount } = folderLanes[folderIdx]!;
+                const folderColor = COLORS[folderIdx % COLORS.length]!;
+                const sparkBaseY = incidentRowOffset + folderYOffsets[folderIdx]! + laneCount * ROW_HEIGHT;
+
+                return sparklines.map(({ topic, field, type }, sparkIdx) => {
+                  const key = `${folderName}/${topic}/${field}`;
+                  const segments = sparklineData.get(key) ?? [];
+                  const rowY = sparkBaseY + sparkIdx * SPARKLINE_ROW_HEIGHT;
+                  const rowH = SPARKLINE_ROW_HEIGHT - 2; // 1px margin top/bottom
+
+                  // Compute Y range across all segments for auto-scaling
+                  let minVal = Infinity;
+                  let maxVal = -Infinity;
+                  for (const seg of segments) {
+                    for (const v of seg.values) {
+                      if (v < minVal) minVal = v;
+                      if (v > maxVal) maxVal = v;
+                    }
+                  }
+                  if (!isFinite(minVal)) {
+                    return null;
+                  }
+                  // For boolean signals, force 0-1 range
+                  if (type === "boolean") {
+                    minVal = 0;
+                    maxVal = 1;
+                  }
+                  const valRange = maxVal - minVal || 1;
+
+                  return (
+                    <g key={`sparkline-${key}`}>
+                      {/* Sparkline background */}
+                      <rect
+                        x={0}
+                        y={rowY}
+                        width={svgWidth}
+                        height={SPARKLINE_ROW_HEIGHT}
+                        fill="transparent"
+                      />
+                      {segments.map((seg, segIdx) => {
+                        if (seg.timestamps.length === 0) {
+                          return null;
+                        }
+                        const points = seg.timestamps
+                          .map((t, j) => {
+                            const x = timeToX(t);
+                            const yVal = rowY + 1 + (1 - (seg.values[j]! - minVal) / valRange) * rowH;
+                            return `${x},${yVal}`;
+                          });
+
+                        // For boolean: step function
+                        if (type === "boolean") {
+                          const stepPoints: string[] = [];
+                          for (let j = 0; j < seg.timestamps.length; j++) {
+                            const x = timeToX(seg.timestamps[j]!);
+                            const yVal = rowY + 1 + (1 - (seg.values[j]! - minVal) / valRange) * rowH;
+                            if (j > 0) {
+                              // Horizontal line to current x at previous y
+                              const prevY = rowY + 1 + (1 - (seg.values[j - 1]! - minVal) / valRange) * rowH;
+                              stepPoints.push(`${x},${prevY}`);
+                            }
+                            stepPoints.push(`${x},${yVal}`);
+                          }
+                          // Extend to file end time
+                          if (seg.timestamps.length > 0) {
+                            const lastY = rowY + 1 + (1 - (seg.values[seg.values.length - 1]! - minVal) / valRange) * rowH;
+                            const lastX = timeToX(seg.timestamps[seg.timestamps.length - 1]! + 1);
+                            stepPoints.push(`${lastX},${lastY}`);
+                          }
+                          return (
+                            <polyline
+                              key={`seg-${segIdx}`}
+                              points={stepPoints.join(" ")}
+                              fill="none"
+                              stroke={folderColor}
+                              strokeWidth={1.5}
+                              opacity={0.8}
+                              style={{ pointerEvents: "none" }}
+                            />
+                          );
+                        }
+
+                        return (
+                          <polyline
+                            key={`seg-${segIdx}`}
+                            points={points.join(" ")}
+                            fill="none"
+                            stroke={folderColor}
+                            strokeWidth={1}
+                            opacity={0.7}
+                            style={{ pointerEvents: "none" }}
+                          />
+                        );
+                      })}
+                    </g>
+                  );
+                });
               })}
 
               {/* Incident markers */}
@@ -1483,6 +1745,69 @@ export default function McapTimeline(): JSX.Element {
               )}
             </svg>
           </div>
+
+          {/* Sparkline field picker popover */}
+          {sparklinePopover && (
+            <Popover
+              open
+              anchorEl={sparklinePopover.anchorEl}
+              onClose={() => { setSparklinePopover(null); }}
+              anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+              transformOrigin={{ vertical: "top", horizontal: "left" }}
+              slotProps={{ paper: { sx: { p: 1, width: 320, maxHeight: 400 } } }}
+            >
+              <Typography variant="caption" fontWeight={600} sx={{ mb: 0.5, display: "block" }}>
+                Add sparkline to {sparklinePopover.folder}
+              </Typography>
+              {sparklineFieldsLoading ? (
+                <Stack alignItems="center" padding={2}><CircularProgress size={20} /></Stack>
+              ) : (
+                <Autocomplete
+                  autoFocus
+                  openOnFocus
+                  size="small"
+                  options={sparklineFields}
+                  getOptionLabel={(opt) => `${opt.topic}.${opt.field}`}
+                  renderOption={(props, opt) => (
+                    <li {...props} key={`${opt.topic}/${opt.field}`}>
+                      <span style={{ flex: 1, fontSize: 12 }}>{opt.field}</span>
+                      <Chip
+                        label={opt.type === "boolean" ? "bool" : "num"}
+                        size="small"
+                        sx={{ fontSize: 10, height: 18 }}
+                      />
+                    </li>
+                  )}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      placeholder="Search fields…"
+                      autoFocus
+                      size="small"
+                    />
+                  )}
+                  onChange={(_e, opt) => {
+                    if (!opt) {
+                      return;
+                    }
+                    const folder = sparklinePopover.folder;
+                    setSparklineConfigs((prev) => {
+                      const next = new Map(prev);
+                      const list = next.get(folder) ?? [];
+                      // Don't add duplicates
+                      if (list.some((s) => s.topic === opt.topic && s.field === opt.field)) {
+                        return prev;
+                      }
+                      next.set(folder, [...list, { topic: opt.topic, field: opt.field, type: opt.type }]);
+                      return next;
+                    });
+                    setSparklinePopover(null);
+                  }}
+                  ListboxProps={{ style: { maxHeight: 250, fontSize: 12 } }}
+                />
+              )}
+            </Popover>
+          )}
 
           {/* Single hover tooltip */}
           {tooltipState && (
