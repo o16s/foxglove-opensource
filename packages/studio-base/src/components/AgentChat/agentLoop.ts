@@ -57,12 +57,20 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         });
         continue;
       }
-      const result = await executeTool(toolCall.function.name, args);
-      conversation.push({
-        role: "tool",
-        content: result,
-        tool_call_id: toolCall.id,
-      });
+      try {
+        const result = await executeTool(toolCall.function.name, args);
+        conversation.push({
+          role: "tool",
+          content: result,
+          tool_call_id: toolCall.id,
+        });
+      } catch (err) {
+        conversation.push({
+          role: "tool",
+          content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          tool_call_id: toolCall.id,
+        });
+      }
     }
   }
 

@@ -10,7 +10,7 @@ import { AddPanelPayload, ChangePanelLayoutPayload, SaveConfigsPayload } from "@
 import { DataSourceArgs } from "@foxglove/studio-base/context/PlayerSelectionContext";
 import { storeDownloadedFiles } from "@foxglove/studio-base/dataSources/McapServerDataSourceFactory";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
-import { getPanelIdForType } from "@foxglove/studio-base/util/layout";
+import { getPanelIdForType, PANEL_TITLE_CONFIG_KEY } from "@foxglove/studio-base/util/layout";
 
 export type TopicInfo = {
   name: string;
@@ -103,6 +103,15 @@ function extractFieldValues(
   return results;
 }
 
+/** Map LLM-friendly "title" key to the actual panel title config key. */
+function normalizeTitleField(config: Record<string, unknown>): Record<string, unknown> {
+  if ("title" in config && !(PANEL_TITLE_CONFIG_KEY in config)) {
+    const { title, ...rest } = config;
+    return { ...rest, [PANEL_TITLE_CONFIG_KEY]: title };
+  }
+  return config;
+}
+
 function downsample<T>(data: T[], limit: number): T[] {
   if (data.length <= limit) {
     return data;
@@ -169,7 +178,7 @@ export function createToolExecutor(
 
     add_panel: async (args) => {
       const panelType = args.type as string;
-      let config = (args.config as Record<string, unknown>) ?? {};
+      let config = normalizeTitleField((args.config as Record<string, unknown>) ?? {});
       // Fix LLM putting imageTopic at top level instead of inside imageMode
       if (panelType === "Image" && "imageTopic" in config && !("imageMode" in config)) {
         const { imageTopic, ...rest } = config;
@@ -184,13 +193,19 @@ export function createToolExecutor(
       const layout = args.layout as MosaicNode<string>;
       const configs = (args.configs as Record<string, Record<string, unknown>>) ?? {};
 
+      const existingConfigById = ctx.currentLayout.configById;
+
       // Build a mapping from LLM-generated IDs to real unique panel IDs.
-      // This prevents collisions when the LLM reuses IDs or when IDs
-      // conflict with existing panels.
+      // Reuse existing IDs when they already exist in the current layout
+      // to preserve config fields (like titles) that the LLM didn't include.
       const idMap = new Map<string, string>();
       for (const llmId of Object.keys(configs)) {
-        const panelType = llmId.split("!")[0] ?? llmId;
-        idMap.set(llmId, getPanelIdForType(panelType));
+        if (llmId in existingConfigById) {
+          idMap.set(llmId, llmId);
+        } else {
+          const panelType = llmId.split("!")[0] ?? llmId;
+          idMap.set(llmId, getPanelIdForType(panelType));
+        }
       }
 
       // Recursively remap panel IDs in the mosaic tree
@@ -210,18 +225,23 @@ export function createToolExecutor(
       const remappedLayout = remapLayout(layout);
 
       // Build configById with remapped IDs, normalizing Image panel configs
+      // and merging with existing config for reused panel IDs
       const configById: Record<string, unknown> = {};
-      for (const [llmId, config] of Object.entries(configs)) {
+      for (const [llmId, rawConfig] of Object.entries(configs)) {
+        const realId = idMap.get(llmId) ?? llmId;
         const panelType = llmId.split("!")[0];
+        let config = normalizeTitleField(rawConfig);
         // Fix LLM putting imageTopic at top level instead of inside imageMode
         if (panelType === "Image" && "imageTopic" in config && !("imageMode" in config)) {
           const { imageTopic, ...rest } = config;
-          configById[idMap.get(llmId) ?? llmId] = {
-            ...rest,
-            imageMode: { imageTopic },
-          };
+          config = { ...rest, imageMode: { imageTopic } };
+        }
+        // Merge with existing config to preserve fields the LLM didn't include
+        const existing = existingConfigById[realId];
+        if (existing && typeof existing === "object") {
+          configById[realId] = { ...existing, ...config };
         } else {
-          configById[idMap.get(llmId) ?? llmId] = config;
+          configById[realId] = config;
         }
       }
 
@@ -483,7 +503,7 @@ export function createToolExecutor(
 
     configure_panel: async (args): Promise<string> => {
       const panelId = args.panelId as string;
-      let config = args.config as Record<string, unknown>;
+      let config = normalizeTitleField(args.config as Record<string, unknown>);
       // Fix LLM putting imageTopic at top level instead of inside imageMode
       const panelType = panelId.split("!")[0];
       if (panelType === "Image" && "imageTopic" in config && !("imageMode" in config)) {

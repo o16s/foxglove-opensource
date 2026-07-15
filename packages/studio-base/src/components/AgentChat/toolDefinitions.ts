@@ -327,7 +327,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "configure_panel",
       description:
-        "Set arbitrary config fields on any panel. Merges with existing config (does not replace). Use get_panel_config first to see available fields. Common Plot fields: paths, showLegend, legendDisplay ('floating'|'top'|'left'|'none'), showXAxisLabels, showYAxisLabels, followingViewWidth (rolling window seconds), minXValue, maxXValue, minYValue, maxYValue, xAxisVal ('timestamp'|'index'|'custom'), isSynced, title. Common Image fields: imageTopic. Common Gauge fields: path, minValue, maxValue, colorMode, colorMap, reverse. Common Indicator fields: path, style, rules, fallbackColor, fallbackLabel.",
+        "Set arbitrary config fields on any panel. Merges with existing config (does not replace). Use get_panel_config first to see available fields. Common Plot fields: paths, showLegend, legendDisplay ('floating'|'top'|'left'|'none'), showXAxisLabels, showYAxisLabels, followingViewWidth (rolling window seconds), minXValue, maxXValue, minYValue, maxYValue, xAxisVal ('timestamp'|'index'|'custom'), isSynced. Common Image fields: imageTopic. Common Gauge fields: path, minValue, maxValue, colorMode, colorMap, reverse. Common Indicator fields: path, style, rules, fallbackColor, fallbackLabel. To set panel title, use the 'title' field (e.g. { title: 'My Panel Title' }).",
       parameters: {
         type: "object",
         properties: {
