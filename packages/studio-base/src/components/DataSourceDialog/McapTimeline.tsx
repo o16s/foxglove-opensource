@@ -1855,7 +1855,7 @@ export default function McapTimeline(): JSX.Element {
               onClose={() => { setSparklinePopover(null); }}
               anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
               transformOrigin={{ vertical: "top", horizontal: "left" }}
-              slotProps={{ paper: { sx: { p: 1, width: 320, maxHeight: 400 } } }}
+              slotProps={{ paper: { sx: { p: 1, width: 320, overflow: "visible" } } }}
             >
               <Typography variant="caption" fontWeight={600} sx={{ mb: 0.5, display: "block" }}>
                 Add sparkline to {sparklinePopover.folder}
