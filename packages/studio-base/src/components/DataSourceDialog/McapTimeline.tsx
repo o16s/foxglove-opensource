@@ -349,8 +349,14 @@ export default function McapTimeline(): JSX.Element {
     setSelectedRows(new Set(allFolders));
   }, [allFolders]);
 
-  // Resizable label column
-  const [labelWidth, setLabelWidth] = useState(DEFAULT_LABEL_WIDTH);
+  // Resizable label column (persisted to localStorage)
+  const LABEL_WIDTH_KEY = "mcapTimeline.labelWidth";
+  const [labelWidth, setLabelWidth] = useState(() => {
+    const stored = localStorage.getItem(LABEL_WIDTH_KEY);
+    return stored != null ? Math.max(MIN_LABEL_WIDTH, Number(stored)) : DEFAULT_LABEL_WIDTH;
+  });
+  const labelWidthRef = useRef(labelWidth);
+  labelWidthRef.current = labelWidth;
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
@@ -358,7 +364,12 @@ export default function McapTimeline(): JSX.Element {
       const delta = e.clientX - dragRef.current.startX;
       setLabelWidth(Math.max(MIN_LABEL_WIDTH, dragRef.current.startWidth + delta));
     };
-    const onMouseUp = () => { dragRef.current = null; };
+    const onMouseUp = () => {
+      if (dragRef.current) {
+        localStorage.setItem(LABEL_WIDTH_KEY, String(labelWidthRef.current));
+      }
+      dragRef.current = null;
+    };
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
     return () => {
