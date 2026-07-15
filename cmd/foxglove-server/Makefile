@@ -10,9 +10,15 @@ REMOTE_MCAP_PATH ?= /data/mcap
 # Default downloads path on the target
 REMOTE_DOWNLOADS_PATH ?= /data/downloads
 
+# Local dev defaults (override in .env)
+LOCAL_MCAP_PATH ?= /data/mcap
+LOCAL_PORT ?= 8152
+LOCAL_TLS ?= --tls
+LOCAL_GENERATE_TOKEN ?= --generate-token
+
 ## Local targets
 
-.PHONY: web build build-arm64 run clean desktop-installers
+.PHONY: web build build-arm64 run run-local clean desktop-installers
 
 web:
 	cd $(REPO_ROOT) && yarn web:build:prod
@@ -32,6 +38,9 @@ desktop-installers:
 
 run: build
 	./$(BINARY_NAME) --mcap-path $(REMOTE_MCAP_PATH) --downloads-path downloads --tls
+
+run-local: build
+	./$(BINARY_NAME) --mcap-path $(LOCAL_MCAP_PATH) --port $(LOCAL_PORT) $(LOCAL_TLS) $(LOCAL_GENERATE_TOKEN)
 
 clean:
 	rm -f $(BINARY_NAME) $(BINARY_NAME)-arm64

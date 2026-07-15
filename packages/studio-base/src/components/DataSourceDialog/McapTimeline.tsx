@@ -14,11 +14,13 @@ import {
   Checkbox,
   CircularProgress,
   Divider,
+  IconButton,
   LinearProgress,
   Link,
   ListItemText,
   Menu,
   MenuItem,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
@@ -105,7 +107,7 @@ const LABEL_WIDTH = 180;
 const BAR_HEIGHT = 20;
 const BAR_Y_OFFSET = (ROW_HEIGHT - BAR_HEIGHT) / 2;
 const MIN_BAR_WIDTH = 4;
-const SELECTION_SPAN = 5 * 60; // 5 minutes in seconds
+const DEFAULT_SELECTION_SPAN_MIN = 5;
 const DOWNLOAD_CONCURRENCY = 4; // number of parallel file downloads
 const PROGRESS_THROTTLE_MS = 100; // minimum interval between progress UI updates
 
@@ -332,8 +334,10 @@ export default function McapTimeline(): JSX.Element {
   // All folder rows are always selected
   const selectedRows = useMemo(() => new Set(files.map((f) => f.folder || "(root)")), [files]);
 
-  // Click selection state — fixed 5-minute span
+  // Click selection state
   const [selCenter, setSelCenter] = useState<number | undefined>();
+  const [selectionSpanMin, setSelectionSpanMin] = useState(DEFAULT_SELECTION_SPAN_MIN);
+  const selectionSpan = selectionSpanMin * 60; // seconds
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const svgColumnRef = useRef<HTMLDivElement>(null);
@@ -507,7 +511,7 @@ export default function McapTimeline(): JSX.Element {
 
     if (urlParams.centerTime != null) {
       // URL-driven: zoom to 5-minute window around the specified time
-      const dur = SELECTION_SPAN * 2; // 10 min visible, 5 min selection centered
+      const dur = selectionSpan * 2; // 10 min visible, 5 min selection centered
       setViewDuration(dur);
       setViewStart(urlParams.centerTime - dur / 2);
       setSelCenter(urlParams.centerTime);
@@ -653,14 +657,14 @@ export default function McapTimeline(): JSX.Element {
 
       // Place time selection cursor
       startTransition(() => {
-        if (selCenter != undefined && Math.abs(time - selCenter) < SELECTION_SPAN / 2) {
+        if (selCenter != undefined && Math.abs(time - selCenter) < selectionSpan / 2) {
           setSelCenter(undefined);
         } else {
           setSelCenter(time);
         }
       });
     },
-    [viewStart, viewDuration, svgWidth, selCenter, incidentRowOffset],
+    [viewStart, viewDuration, svgWidth, selCenter, selectionSpan, incidentRowOffset],
   );
 
   // Hover handler — hit-test visible bars
@@ -726,8 +730,8 @@ export default function McapTimeline(): JSX.Element {
     if (selCenter == undefined) {
       return undefined;
     }
-    return { start: selCenter - SELECTION_SPAN / 2, end: selCenter + SELECTION_SPAN / 2 };
-  }, [selCenter]);
+    return { start: selCenter - selectionSpan / 2, end: selCenter + selectionSpan / 2 };
+  }, [selCenter, selectionSpan]);
 
   const selectedFiles = useMemo(() => {
     if (!selectionRange || selectedRows.size === 0) {
@@ -1486,6 +1490,40 @@ export default function McapTimeline(): JSX.Element {
                 Warning: Large selection — loading may be slow
               </Typography>
             )}
+          </Stack>
+        )}
+
+        {/* Duration control */}
+        {selCenter != undefined && !isDownloading && (
+          <Stack direction="row" alignItems="center" gap={0.5} className={classes.selectionInfo}>
+            <Typography variant="body2" color="text.secondary">
+              Duration
+            </Typography>
+            <IconButton
+              size="small"
+              onClick={() => { setSelectionSpanMin((v) => Math.max(1, v - 1)); }}
+            >
+              <RemoveIcon fontSize="small" />
+            </IconButton>
+            <TextField
+              size="small"
+              type="number"
+              value={selectionSpanMin}
+              onChange={(e) => {
+                const v = Math.max(1, Math.min(1440, Number(e.target.value) || 1));
+                setSelectionSpanMin(v);
+              }}
+              inputProps={{ min: 1, max: 1440, style: { textAlign: "center", padding: "2px 4px", width: 40 } }}
+            />
+            <IconButton
+              size="small"
+              onClick={() => { setSelectionSpanMin((v) => Math.min(1440, v + 1)); }}
+            >
+              <AddIcon fontSize="small" />
+            </IconButton>
+            <Typography variant="body2" color="text.secondary">
+              min
+            </Typography>
           </Stack>
         )}
       </Stack>

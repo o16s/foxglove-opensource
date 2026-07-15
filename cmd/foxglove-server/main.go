@@ -44,12 +44,19 @@ type McapFileInfo struct {
 }
 
 type McapFileIndex struct {
-	Path      string  `json:"path"`
-	Folder    string  `json:"folder"`
-	Filename  string  `json:"filename"`
-	StartTime float64 `json:"startTime"` // unix seconds
-	EndTime   float64 `json:"endTime"`   // unix seconds
-	Size      int64   `json:"size"`
+	Path      string          `json:"path"`
+	Folder    string          `json:"folder"`
+	Filename  string          `json:"filename"`
+	StartTime float64         `json:"startTime"` // unix seconds
+	EndTime   float64         `json:"endTime"`   // unix seconds
+	Size      int64           `json:"size"`
+	Topics    []McapTopicInfo `json:"topics,omitempty"`
+}
+
+type McapTopicInfo struct {
+	Topic           string `json:"topic"`
+	SchemaName      string `json:"schemaName"`
+	MessageEncoding string `json:"messageEncoding"`
 }
 
 // openIndexDB opens (or creates) a SQLite database at dbPath and ensures
@@ -74,36 +81,71 @@ func openIndexDB(dbPath string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("create index table: %w", err)
 	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS mcap_topics (
+		path             TEXT NOT NULL,
+		topic            TEXT NOT NULL,
+		schema_name      TEXT NOT NULL DEFAULT '',
+		message_encoding TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (path, topic)
+	)`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create topics table: %w", err)
+	}
 	return db, nil
 }
 
-// getMcapTimeRange reads the summary section of an MCAP file to extract
-// message start/end timestamps. This is O(1) — it seeks to the footer
-// without scanning messages.
-func getMcapTimeRange(path string) (startNs, endNs uint64, err error) {
+// mcapSummary holds time range and topic metadata extracted from an MCAP file.
+type mcapSummary struct {
+	startNs uint64
+	endNs   uint64
+	topics  []McapTopicInfo
+}
+
+// getMcapSummary reads the summary section of an MCAP file to extract
+// message start/end timestamps and topic metadata. This is O(1) — it seeks
+// to the footer without scanning messages.
+func getMcapSummary(path string) (mcapSummary, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, 0, err
+		return mcapSummary{}, err
 	}
 	defer f.Close()
 
 	reader, err := mcap.NewReader(f)
 	if err != nil {
-		return 0, 0, fmt.Errorf("mcap reader: %w", err)
+		return mcapSummary{}, fmt.Errorf("mcap reader: %w", err)
 	}
 	defer reader.Close()
 
 	info, err := reader.Info()
 	if err == nil {
-		// Prefer Statistics record
+		// Extract topics from summary
+		var topics []McapTopicInfo
+		for _, ch := range info.Channels {
+			ti := McapTopicInfo{
+				Topic:           ch.Topic,
+				MessageEncoding: ch.MessageEncoding,
+			}
+			if schema, ok := info.Schemas[ch.SchemaID]; ok {
+				ti.SchemaName = schema.Name
+			}
+			topics = append(topics, ti)
+		}
+
+		// Prefer Statistics record for time range
 		if info.Statistics != nil && info.Statistics.MessageCount > 0 {
-			return info.Statistics.MessageStartTime, info.Statistics.MessageEndTime, nil
+			return mcapSummary{
+				startNs: info.Statistics.MessageStartTime,
+				endNs:   info.Statistics.MessageEndTime,
+				topics:  topics,
+			}, nil
 		}
 
 		// Fallback: scan ChunkIndex records
 		if len(info.ChunkIndexes) > 0 {
-			startNs = info.ChunkIndexes[0].MessageStartTime
-			endNs = info.ChunkIndexes[0].MessageEndTime
+			startNs := info.ChunkIndexes[0].MessageStartTime
+			endNs := info.ChunkIndexes[0].MessageEndTime
 			for _, ci := range info.ChunkIndexes[1:] {
 				if ci.MessageStartTime < startNs {
 					startNs = ci.MessageStartTime
@@ -112,13 +154,17 @@ func getMcapTimeRange(path string) (startNs, endNs uint64, err error) {
 					endNs = ci.MessageEndTime
 				}
 			}
-			return startNs, endNs, nil
+			return mcapSummary{startNs: startNs, endNs: endNs, topics: topics}, nil
 		}
 	}
 
 	// Info() failed (e.g. file still being written — no valid footer).
 	// Fall back to scanning chunk headers from the start of the file.
-	return getMcapTimeRangeFromChunks(path)
+	startNs, endNs, err := getMcapTimeRangeFromChunks(path)
+	if err != nil {
+		return mcapSummary{}, err
+	}
+	return mcapSummary{startNs: startNs, endNs: endNs}, nil
 }
 
 // getMcapTimeRangeFromChunks reads chunk headers sequentially from the start
@@ -734,22 +780,40 @@ func main() {
 			modTimeStr := entry.info.ModTime().UTC().Format(time.RFC3339)
 
 			var startNs, endNs uint64
+			var topics []McapTopicInfo
 			cacheHit := false
 			if indexDB != nil {
 				err := indexDB.QueryRow(
 					`SELECT start_time, end_time FROM mcap_index WHERE path = ? AND mod_time = ? AND size = ?`,
 					entry.relPath, modTimeStr, entry.info.Size(),
 				).Scan(&startNs, &endNs)
-				cacheHit = err == nil
+				if err == nil {
+					cacheHit = true
+					// Load cached topics
+					if tRows, tErr := indexDB.Query(
+						`SELECT topic, schema_name, message_encoding FROM mcap_topics WHERE path = ?`,
+						entry.relPath,
+					); tErr == nil {
+						for tRows.Next() {
+							var ti McapTopicInfo
+							if tRows.Scan(&ti.Topic, &ti.SchemaName, &ti.MessageEncoding) == nil {
+								topics = append(topics, ti)
+							}
+						}
+						tRows.Close()
+					}
+				}
 			}
 
 			if !cacheHit {
-				var indexErr error
-				startNs, endNs, indexErr = getMcapTimeRange(entry.path)
+				summary, indexErr := getMcapSummary(entry.path)
 				if indexErr != nil {
 					log.Printf("Warning: could not index %s: %v", entry.relPath, indexErr)
 					continue
 				}
+				startNs = summary.startNs
+				endNs = summary.endNs
+				topics = summary.topics
 
 				if indexDB != nil {
 					_, indexErr = indexDB.Exec(
@@ -758,6 +822,14 @@ func main() {
 					)
 					if indexErr != nil {
 						log.Printf("Warning: could not cache index for %s: %v", entry.relPath, indexErr)
+					}
+					// Cache topics
+					indexDB.Exec(`DELETE FROM mcap_topics WHERE path = ?`, entry.relPath)
+					for _, ti := range topics {
+						indexDB.Exec(
+							`INSERT INTO mcap_topics (path, topic, schema_name, message_encoding) VALUES (?, ?, ?, ?)`,
+							entry.relPath, ti.Topic, ti.SchemaName, ti.MessageEncoding,
+						)
 					}
 				}
 			}
@@ -784,6 +856,7 @@ func main() {
 				StartTime: float64(startNs) / 1e9,
 				EndTime:   float64(endNs) / 1e9,
 				Size:      entry.info.Size(),
+				Topics:    topics,
 			}})
 			flusher.Flush()
 		}
@@ -805,6 +878,7 @@ func main() {
 			rows.Close()
 			for _, p := range stalePaths {
 				indexDB.Exec(`DELETE FROM mcap_index WHERE path = ?`, p)
+				indexDB.Exec(`DELETE FROM mcap_topics WHERE path = ?`, p)
 			}
 		}
 

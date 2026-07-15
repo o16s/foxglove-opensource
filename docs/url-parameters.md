@@ -238,11 +238,36 @@ These are served by the Go server (`cmd/foxglove-server/main.go`), enabled when 
 | GET | `/api/mcap/files` | List all MCAP files (JSON array) |
 | GET | `/api/mcap/files/<path>` | Serve an individual MCAP file (supports HTTP Range requests) |
 | GET | `/api/mcap/topics/<path>` | List topics in an MCAP file (JSON array with topic, schemaName, messageEncoding, messageCount) |
-| GET | `/api/mcap/index` | Stream NDJSON index with time ranges per file. Optional `?start=<unix>&end=<unix>` filters to files overlapping that window. |
+| GET | `/api/mcap/index` | Stream NDJSON index with time ranges and topic metadata per file. Optional `?start=<unix>&end=<unix>` filters to files overlapping that window. |
 | GET | `/api/mcap/video/<path>` | Remux an H.264 video topic from an MCAP file to streamable MP4 |
 | GET | `/api/downloads` | List desktop installer files (JSON array, requires `--downloads-path`) |
 | GET | `/api/downloads/<filename>` | Serve a desktop installer file |
 | GET | `/` | Serve the web app (SPA with HTML5 history fallback) |
+
+### File Index: `/api/mcap/index`
+
+Streams an NDJSON index of all MCAP files. Each file entry now includes topic and schema metadata alongside time ranges, so clients can filter or display topic information without a separate request per file.
+
+#### Response Format
+
+Each file line is a JSON object with a `file` key:
+
+```json
+{"file": {
+  "path": "sensingcam/live-stream/sick1_2026-07-13.mcap",
+  "folder": "sensingcam/live-stream",
+  "filename": "sick1_2026-07-13.mcap",
+  "startTime": 1752392876.123,
+  "endTime": 1752393000.456,
+  "size": 8012345,
+  "topics": [
+    {"topic": "sensingcam/sick1/video/h264", "schemaName": "foxglove.CompressedVideo", "messageEncoding": "protobuf"},
+    {"topic": "sensingcam/sick1/imu", "schemaName": "sensor_msgs/msg/Imu", "messageEncoding": "cdr"}
+  ]
+}}
+```
+
+The `topics` array contains all channels in the file with their topic name, schema name, and message encoding. Topic metadata is cached in SQLite alongside the time range index for fast subsequent lookups.
 
 ### Video Streaming: `/api/mcap/video/<path>`
 
