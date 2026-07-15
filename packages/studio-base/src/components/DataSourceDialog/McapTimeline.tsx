@@ -1951,6 +1951,37 @@ export default function McapTimeline(): JSX.Element {
                       autoFocus
                       size="small"
                       FormHelperTextProps={{ sx: { fontSize: 10, mt: 0.5, opacity: 0.6 } }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const input = (e.target as HTMLInputElement).value.trim();
+                          if (input.includes("*")) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const regex = new RegExp(
+                              "^" + input.toLowerCase().replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$",
+                              "i",
+                            );
+                            const matches = sparklineFields.filter((f) =>
+                              regex.test(`${f.topic}.${f.field}`) || regex.test(f.field),
+                            );
+                            if (matches.length > 0) {
+                              const folder = sparklinePopover!.folder;
+                              setSparklineConfigs((prev) => {
+                                const next = new Map(prev);
+                                const list = [...(next.get(folder) ?? [])];
+                                for (const m of matches) {
+                                  if (!list.some((s) => s.topic === m.topic && s.field === m.field)) {
+                                    list.push({ topic: m.topic, field: m.field, type: m.type });
+                                  }
+                                }
+                                next.set(folder, list);
+                                return next;
+                              });
+                              setSparklinePopover(null);
+                            }
+                          }
+                        }
+                      }}
                     />
                   )}
                   onChange={(_e, opt) => {
