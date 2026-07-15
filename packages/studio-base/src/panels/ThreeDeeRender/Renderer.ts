@@ -611,7 +611,7 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
         hasAddedMessageEvents = true;
       }
 
-      this.addMessageEvent(message);
+      this.addMessageEvent(message, /* fromAllFrames */ true);
       lastReadMessage = message;
       if (cursor === allFrames.length - 1) {
         cursorTimeReached = message.receiveTime;
@@ -962,7 +962,7 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     }
   }
 
-  public addMessageEvent(messageEvent: Readonly<MessageEvent>): void {
+  public addMessageEvent(messageEvent: Readonly<MessageEvent>, fromAllFrames = false): void {
     const { message } = messageEvent;
 
     const maybeHasHeader = message as DeepPartial<{ header: Header }>;
@@ -996,8 +996,8 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       this.addCoordinateFrame(maybeHasFrameId.frame_id);
     }
 
-    queueMessage(messageEvent, this.topicSubscriptions.get(messageEvent.topic));
-    queueMessage(messageEvent, this.schemaSubscriptions.get(messageEvent.schemaName));
+    queueMessage(messageEvent, this.topicSubscriptions.get(messageEvent.topic), fromAllFrames);
+    queueMessage(messageEvent, this.schemaSubscriptions.get(messageEvent.schemaName), fromAllFrames);
   }
 
   /** Match the behavior of `tf::Transformer` by stripping leading slashes from
@@ -1537,9 +1537,15 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
 function queueMessage(
   messageEvent: Readonly<MessageEvent>,
   subscriptions: RendererSubscription[] | undefined,
+  fromAllFrames = false,
 ): void {
   if (subscriptions) {
     for (const subscription of subscriptions) {
+      // preloadOnly subscriptions are available in allFrames for direct access
+      // (e.g. keyframe priming) but should not be queued for rendering
+      if (fromAllFrames && subscription.preloadOnly === true) {
+        continue;
+      }
       subscription.queue = subscription.queue ?? [];
       subscription.queue.push(messageEvent);
     }

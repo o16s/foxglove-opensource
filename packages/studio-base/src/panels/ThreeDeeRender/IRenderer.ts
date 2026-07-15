@@ -169,6 +169,10 @@ export type RendererConfig = {
 export type RendererSubscription<T = unknown> = {
   /** Preload the full history of topic messages as a best effort */
   preload?: boolean;
+  /** When true, messages are included in allFrames for direct access but are NOT
+   * queued via addMessageEvent during allFrames processing. Use this for video
+   * topics that should only render via currentFrame or keyframe priming. */
+  preloadOnly?: boolean;
   /**
    * By default, topic subscriptions are only created when the topic visibility
    * has been toggled on by the user in the settings sidebar. Override this
