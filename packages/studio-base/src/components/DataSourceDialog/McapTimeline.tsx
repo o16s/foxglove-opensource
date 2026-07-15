@@ -1866,6 +1866,7 @@ export default function McapTimeline(): JSX.Element {
                 <Autocomplete
                   autoFocus
                   openOnFocus
+                  disablePortal
                   size="small"
                   options={sparklineFields}
                   getOptionLabel={(opt) => `${opt.topic}.${opt.field}`}
