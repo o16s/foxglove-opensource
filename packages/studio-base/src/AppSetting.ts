@@ -16,6 +16,7 @@ export enum AppSetting {
 
   // Experimental features
   SHOW_DEBUG_PANELS = "showDebugPanels",
+  ENABLE_VIDEO_EXPORT = "experimental.videoExport",
 
   // Miscellaneous
   HIDE_SIGN_IN_PROMPT = "hideSignInPrompt",

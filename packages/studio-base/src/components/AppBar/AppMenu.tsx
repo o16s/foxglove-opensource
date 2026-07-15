@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { makeStyles } from "tss-react/mui";
 
+import { AppSetting } from "@foxglove/studio-base/AppSetting";
 import TextMiddleTruncate from "@foxglove/studio-base/components/TextMiddleTruncate";
 import { useCurrentLayoutActions } from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { usePlayerSelection } from "@foxglove/studio-base/context/PlayerSelectionContext";
@@ -17,6 +18,7 @@ import {
   useWorkspaceStore,
 } from "@foxglove/studio-base/context/Workspace/WorkspaceContext";
 import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/useWorkspaceActions";
+import { useAppConfigurationValue } from "@foxglove/studio-base/hooks/useAppConfigurationValue";
 
 import { NestedMenuItem } from "./NestedMenuItem";
 import { AppBarMenuItem } from "./types";
@@ -56,6 +58,9 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
   const rightSidebarOpen = useWorkspaceStore(selectRightSidebarOpen);
   const { sidebarActions, dialogActions, layoutActions } = useWorkspaceActions();
   const { getCurrentLayoutState } = useCurrentLayoutActions();
+  const [videoExportEnabled = false] = useAppConfigurationValue<boolean>(
+    AppSetting.ENABLE_VIDEO_EXPORT,
+  );
 
   const handleNestedMenuClose = useCallback(() => {
     setNestedMenu(undefined);
@@ -119,15 +124,19 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
           handleNestedMenuClose();
         },
       },
-      {
-        type: "item",
-        label: "Export Video...",
-        key: "export-video",
-        onClick: () => {
-          dialogActions.exportVideo.open();
-          handleNestedMenuClose();
-        },
-      },
+      ...(videoExportEnabled
+        ? [
+            {
+              type: "item" as const,
+              label: "Export Video...",
+              key: "export-video",
+              onClick: () => {
+                dialogActions.exportVideo.open();
+                handleNestedMenuClose();
+              },
+            },
+          ]
+        : []),
       { type: "divider" },
       { type: "item", label: t("recentDataSources"), key: "recent-sources", disabled: true },
     ];
@@ -156,6 +165,7 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
     recentSources,
     selectRecent,
     t,
+    videoExportEnabled,
   ]);
 
   // VIEW

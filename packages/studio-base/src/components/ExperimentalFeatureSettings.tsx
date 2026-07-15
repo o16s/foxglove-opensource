@@ -45,6 +45,11 @@ function useFeatures(): Feature[] {
       name: t("newAppMenu"),
       description: <>{t("newAppMenuDescription")}</>,
     },
+    {
+      key: AppSetting.ENABLE_VIDEO_EXPORT,
+      name: "Video export",
+      description: <>Enable the &quot;Export Video&quot; option in the File menu.</>,
+    },
   ];
 
   if (process.env.NODE_ENV === "development") {
