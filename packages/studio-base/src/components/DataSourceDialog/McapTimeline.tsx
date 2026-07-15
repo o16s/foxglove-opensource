@@ -109,7 +109,7 @@ type DownloadProgress = {
 type SparklineField = { topic: string; field: string; type: string };
 type SparklineSegment = { file: string; timestamps: number[]; values: number[] };
 
-const ROW_HEIGHT = 12;
+const ROW_HEIGHT = 20;
 const SPARKLINE_ROW_HEIGHT = 20;
 const HEADER_HEIGHT = 40;
 const DEFAULT_LABEL_WIDTH = 180;
