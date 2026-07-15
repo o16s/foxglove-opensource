@@ -524,7 +524,7 @@ export default function McapTimeline(): JSX.Element {
   const [tooltipState, setTooltipState] = useState<{
     file?: McapFileIndex;
     incident?: Incident & { timeSec: number };
-    sparkline?: { field: string; time: number; value: number; type: string };
+    sparkline?: { topic: string; field: string; time: number; value: number; type: string };
     x: number;
     y: number;
   } | null>(null);
@@ -957,7 +957,7 @@ export default function McapTimeline(): JSX.Element {
             }
             if (nearest) {
               setTooltipState({
-                sparkline: { field, time: nearest.time, value: nearest.value, type },
+                sparkline: { topic, field, time: nearest.time, value: nearest.value, type },
                 x: e.clientX - wrapperRect.left + 12,
                 y: e.clientY - wrapperRect.top + scrollTop - 10,
               });
@@ -1526,7 +1526,7 @@ export default function McapTimeline(): JSX.Element {
                           noWrap
                           sx={{ fontSize: 9, opacity: 0.7, flexGrow: 1, color: folderColor }}
                         >
-                          {field}
+                          <span style={{ opacity: 0.5 }}>{topic}.</span>{field}
                         </Typography>
                       </Tooltip>
                       <IconButton
@@ -1872,7 +1872,7 @@ export default function McapTimeline(): JSX.Element {
                   getOptionLabel={(opt) => `${opt.topic}.${opt.field}`}
                   renderOption={(props, opt) => (
                     <li {...props} key={`${opt.topic}/${opt.field}`}>
-                      <span style={{ flex: 1, fontSize: 12 }}>{opt.field}</span>
+                      <span style={{ flex: 1, fontSize: 12 }}><span style={{ opacity: 0.5 }}>{opt.topic}.</span>{opt.field}</span>
                       <Chip
                         label={opt.type === "boolean" ? "bool" : "num"}
                         size="small"
@@ -1929,7 +1929,7 @@ export default function McapTimeline(): JSX.Element {
               )}
               {tooltipState.sparkline && (
                 <>
-                  <strong>{tooltipState.sparkline.field}</strong>
+                  <strong>{tooltipState.sparkline.topic}.{tooltipState.sparkline.field}</strong>
                   <br />
                   {new Date(tooltipState.sparkline.time * 1000).toLocaleString()}
                   <br />
