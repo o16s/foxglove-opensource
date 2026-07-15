@@ -498,6 +498,7 @@ export default function McapTimeline(): JSX.Element {
   const [tooltipState, setTooltipState] = useState<{
     file?: McapFileIndex;
     incident?: Incident & { timeSec: number };
+    sparkline?: { field: string; time: number; value: number; type: string };
     x: number;
     y: number;
   } | null>(null);
@@ -873,11 +874,52 @@ export default function McapTimeline(): JSX.Element {
           x: e.clientX - wrapperRect.left + 12,
           y: e.clientY - wrapperRect.top + scrollTop - 10,
         });
-      } else {
-        setTooltipState(null);
+        return;
       }
+
+      // Check sparkline regions
+      const hoverTime = viewStart + (mx / svgWidth) * viewDuration;
+      for (let fi = 0; fi < folders.length; fi++) {
+        const [folderName] = folders[fi]!;
+        const sparklines = sparklineConfigs.get(folderName) ?? [];
+        if (sparklines.length === 0) {
+          continue;
+        }
+        const { laneCount } = folderLanes[fi]!;
+        const sparkBaseY = incidentRowOffset + folderYOffsets[fi]! + laneCount * ROW_HEIGHT;
+        for (let si = 0; si < sparklines.length; si++) {
+          const rowY = sparkBaseY + si * SPARKLINE_ROW_HEIGHT;
+          if (my >= rowY && my <= rowY + SPARKLINE_ROW_HEIGHT) {
+            const { topic, field, type } = sparklines[si]!;
+            const dataKey = `${folderName}/${topic}/${field}`;
+            const segments = sparklineData.get(dataKey) ?? [];
+            // Find nearest data point across all segments
+            let nearest: { time: number; value: number } | undefined;
+            let bestDist = Infinity;
+            for (const seg of segments) {
+              for (let j = 0; j < seg.timestamps.length; j++) {
+                const dist = Math.abs(seg.timestamps[j]! - hoverTime);
+                if (dist < bestDist) {
+                  bestDist = dist;
+                  nearest = { time: seg.timestamps[j]!, value: seg.values[j]! };
+                }
+              }
+            }
+            if (nearest) {
+              setTooltipState({
+                sparkline: { field, time: nearest.time, value: nearest.value, type },
+                x: e.clientX - wrapperRect.left + 12,
+                y: e.clientY - wrapperRect.top + scrollTop - 10,
+              });
+              return;
+            }
+          }
+        }
+      }
+
+      setTooltipState(null);
     },
-    [visibleBars, hasIncidents, incidentMarkers, timeToX],
+    [visibleBars, hasIncidents, incidentMarkers, timeToX, folders, folderLanes, folderYOffsets, folderSparklineCounts, sparklineConfigs, sparklineData, viewStart, viewDuration, svgWidth, incidentRowOffset],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -1428,7 +1470,7 @@ export default function McapTimeline(): JSX.Element {
                       {!hasData && (
                         <CircularProgress size={10} sx={{ mr: 0.5, flexShrink: 0 }} />
                       )}
-                      <Tooltip title={`${topic}.${field}`} placement="right">
+                      <Tooltip title={`${topic}.${field} — downsampled preview (1 in 10 messages)`} placement="right">
                         <Typography
                           variant="caption"
                           noWrap
@@ -1832,6 +1874,19 @@ export default function McapTimeline(): JSX.Element {
                   {new Date(tooltipState.file.endTime * 1000).toLocaleString()}
                   <br />
                   {formatFileSize(tooltipState.file.size)}
+                </>
+              )}
+              {tooltipState.sparkline && (
+                <>
+                  <strong>{tooltipState.sparkline.field}</strong>
+                  <br />
+                  {new Date(tooltipState.sparkline.time * 1000).toLocaleString()}
+                  <br />
+                  {tooltipState.sparkline.type === "boolean"
+                    ? (tooltipState.sparkline.value === 1 ? "true" : "false")
+                    : tooltipState.sparkline.value.toFixed(3)}
+                  <br />
+                  <span style={{ opacity: 0.6, fontSize: 10 }}>Downsampled preview</span>
                 </>
               )}
               {tooltipState.incident && (
