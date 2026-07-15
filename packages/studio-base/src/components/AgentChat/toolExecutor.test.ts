@@ -123,7 +123,11 @@ describe("createToolExecutor", () => {
     // Configs should use the new IDs
     expect(call.configById[appliedLayout.first]).toEqual({ topic: "/camera/image" });
     expect(call.configById[appliedLayout.second]).toEqual({ paths: [] });
-    expect(result).toBe("Layout updated");
+    expect(result).toContain("Layout updated");
+    expect(result).toContain("Panel IDs");
+    // Should contain the real panel IDs in the mapping
+    expect(result).toContain(appliedLayout.first);
+    expect(result).toContain(appliedLayout.second);
   });
 
   it("set_layout assigns unique IDs to duplicate panel types", async () => {
@@ -160,11 +164,11 @@ describe("createToolExecutor", () => {
     // All should be Image panel type
     allIds.forEach((id: string) => expect(id).toMatch(/^Image!/));
 
-    // Each config should map to the correct topic
-    expect(call.configById[allIds[0]]).toEqual({ imageTopic: "/cam1" });
-    expect(call.configById[allIds[1]]).toEqual({ imageTopic: "/cam2" });
-    expect(call.configById[allIds[2]]).toEqual({ imageTopic: "/cam3" });
-    expect(call.configById[allIds[3]]).toEqual({ imageTopic: "/cam4" });
+    // Each config should have imageTopic normalized inside imageMode
+    expect(call.configById[allIds[0]]).toEqual({ imageMode: { imageTopic: "/cam1" } });
+    expect(call.configById[allIds[1]]).toEqual({ imageMode: { imageTopic: "/cam2" } });
+    expect(call.configById[allIds[2]]).toEqual({ imageMode: { imageTopic: "/cam3" } });
+    expect(call.configById[allIds[3]]).toEqual({ imageMode: { imageTopic: "/cam4" } });
   });
 
   it("get_topic_fields returns field paths for a topic", async () => {

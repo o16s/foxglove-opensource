@@ -320,7 +320,10 @@ export default function AgentChat(): ReactElement {
     );
   }
 
-  const visibleMessages = messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.content);
+  const visibleMessages = messages.filter((m) =>
+    (m.role === "user" && m.content) ||
+    (m.role === "assistant" && (m.content || m.tool_calls)),
+  );
 
   return (
     <div className={classes.container}>
@@ -331,8 +334,16 @@ export default function AgentChat(): ReactElement {
             IMU acceleration side by side&quot;
           </Typography>
         )}
-        {visibleMessages.map((msg, i) =>
-          msg.role === "assistant" && msg.content ? (
+        {visibleMessages.map((msg, i) => {
+          // Tool call messages: show subtle indicator
+          if (msg.role === "assistant" && !msg.content && msg.tool_calls) {
+            return (
+              <Typography key={i} variant="caption" sx={{ px: 1, py: 0.25, opacity: 0.45, fontSize: 11, fontStyle: "italic" }}>
+                {msg.tool_calls.map((tc) => tc.function.name).join(", ")}
+              </Typography>
+            );
+          }
+          return msg.role === "assistant" && msg.content ? (
             <div key={i} className={classes.assistantRow}>
               <AgentAvatarSvg className={classes.avatar} />
               <div
@@ -347,8 +358,8 @@ export default function AgentChat(): ReactElement {
             >
               {msg.content}
             </div>
-          ),
-        )}
+          );
+        })}
         {loading && (
           <Stack gap={0.5} paddingX={1}>
             {webllmStatus.state === "loading" && (

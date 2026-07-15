@@ -169,7 +169,12 @@ export function createToolExecutor(
 
     add_panel: async (args) => {
       const panelType = args.type as string;
-      const config = (args.config as Record<string, unknown>) ?? {};
+      let config = (args.config as Record<string, unknown>) ?? {};
+      // Fix LLM putting imageTopic at top level instead of inside imageMode
+      if (panelType === "Image" && "imageTopic" in config && !("imageMode" in config)) {
+        const { imageTopic, ...rest } = config;
+        config = { ...rest, imageMode: { imageTopic } };
+      }
       const id = getPanelIdForType(panelType);
       ctx.addPanel({ id, config });
       return id;
@@ -204,16 +209,32 @@ export function createToolExecutor(
 
       const remappedLayout = remapLayout(layout);
 
-      // Build configById with remapped IDs
+      // Build configById with remapped IDs, normalizing Image panel configs
       const configById: Record<string, unknown> = {};
       for (const [llmId, config] of Object.entries(configs)) {
-        configById[idMap.get(llmId) ?? llmId] = config;
+        const panelType = llmId.split("!")[0];
+        // Fix LLM putting imageTopic at top level instead of inside imageMode
+        if (panelType === "Image" && "imageTopic" in config && !("imageMode" in config)) {
+          const { imageTopic, ...rest } = config;
+          configById[idMap.get(llmId) ?? llmId] = {
+            ...rest,
+            imageMode: { imageTopic },
+          };
+        } else {
+          configById[idMap.get(llmId) ?? llmId] = config;
+        }
       }
 
       // Set layout and configs atomically to prevent the Image panel's
       // auto-select from firing before configs are applied
       ctx.setCurrentLayout({ layout: remappedLayout, configById });
-      return "Layout updated";
+
+      // Return the ID mapping so the LLM can reference panels by their real IDs
+      const mapping: Record<string, string> = {};
+      for (const [llmId, realId] of idMap) {
+        mapping[llmId] = realId;
+      }
+      return `Layout updated. Panel IDs: ${JSON.stringify(mapping)}`;
     },
 
     seek_to_time: async (args) => {
@@ -462,7 +483,13 @@ export function createToolExecutor(
 
     configure_panel: async (args): Promise<string> => {
       const panelId = args.panelId as string;
-      const config = args.config as Record<string, unknown>;
+      let config = args.config as Record<string, unknown>;
+      // Fix LLM putting imageTopic at top level instead of inside imageMode
+      const panelType = panelId.split("!")[0];
+      if (panelType === "Image" && "imageTopic" in config && !("imageMode" in config)) {
+        const { imageTopic, ...rest } = config;
+        config = { ...rest, imageMode: { imageTopic } };
+      }
 
       ctx.savePanelConfigs({
         configs: [{ id: panelId, config, override: false }],

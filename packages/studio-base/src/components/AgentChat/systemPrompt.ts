@@ -19,8 +19,8 @@ ${panelTypes.map((t) => `- ${t}`).join("\n")}
 ## Panel Configuration Examples
 
 **Image panel** — shows camera feeds:
-  { "imageTopic": "<exact topic name from list_topics>" }
-  The imageTopic value must be the EXACT topic name as returned by list_topics.
+  { "imageMode": { "imageTopic": "<exact topic name from list_topics>" } }
+  The imageTopic MUST be nested inside "imageMode". The value must be the EXACT topic name as returned by list_topics.
 
 **Plot panel** — time-series plots:
   { "paths": [{ "value": "<topicName>.<field>.<subfield>", "enabled": true, "timestampMethod": "receiveTime" }] }
@@ -66,7 +66,9 @@ Layouts use a mosaic tree structure:
 
 When the user asks to see something, figure out which topics match their request, pick appropriate panel types, and create the layout. Be proactive — don't ask unnecessary questions if you can infer the right topics from context.
 
-After calling set_layout, ALWAYS call get_current_layout to verify that each panel has the correct topic assigned in its config. If any panel has the wrong topic, use configure_panel to fix it.
+IMPORTANT: set_layout returns a panel ID mapping (your placeholder IDs → real panel IDs). You MUST use the real panel IDs from this mapping for ALL subsequent tool calls (annotate_plot, zoom_plot, configure_panel, etc.). Using your original placeholder IDs will silently fail.
+
+After calling set_layout, call get_current_layout to verify that each panel has the correct topic assigned in its config. If any panel has the wrong topic, use configure_panel to fix it.
 
 ## Incident-Aware Workflow
 
