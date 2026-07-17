@@ -67,6 +67,7 @@ import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
 import { useConfirm } from "@foxglove/studio-base/hooks/useConfirm";
 import { useDefaultWebLaunchPreference } from "@foxglove/studio-base/hooks/useDefaultWebLaunchPreference";
 import useElectronFilesToOpen from "@foxglove/studio-base/hooks/useElectronFilesToOpen";
+import { useAutoUpdate } from "@foxglove/studio-base/hooks/useAutoUpdate";
 import { usePerformanceMonitor } from "@foxglove/studio-base/hooks/usePerformanceMonitor";
 import { PlayerPresence } from "@foxglove/studio-base/players/types";
 import { PanelStateContextProvider } from "@foxglove/studio-base/providers/PanelStateContextProvider";
@@ -133,6 +134,7 @@ const selectWorkspaceRightSidebarSize = (store: WorkspaceContextStore) => store.
 
 function WorkspaceContent(props: WorkspaceProps): JSX.Element {
   usePerformanceMonitor();
+  const autoUpdate = useAutoUpdate();
   const { PerformanceSidebarComponent } = useAppContext();
   const { classes } = useStyles();
   const containerRef = useRef<HTMLDivElement>(ReactNull);
@@ -752,6 +754,78 @@ function WorkspaceContent(props: WorkspaceProps): JSX.Element {
           </Stack>
         )}
         {!embedMode && appBar}
+        {autoUpdate?.status.status === "available" && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="center"
+            gap={1}
+            sx={{ px: 1, py: 0.5, bgcolor: "info.main", color: "info.contrastText" }}
+          >
+            <Typography variant="body2">
+              Version {autoUpdate.status.version} is available.
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{ cursor: "pointer", textDecoration: "underline", fontWeight: "bold" }}
+              onClick={autoUpdate.download}
+            >
+              Download
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{ cursor: "pointer", ml: 1 }}
+              onClick={autoUpdate.dismiss}
+            >
+              ✕
+            </Typography>
+          </Stack>
+        )}
+        {autoUpdate?.status.status === "downloading" && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="center"
+            gap={1}
+            sx={{ px: 1, py: 0.5, bgcolor: "info.main", color: "info.contrastText" }}
+          >
+            <Typography variant="body2">
+              Downloading update… {autoUpdate.status.percent}%
+            </Typography>
+            <LinearProgress
+              variant="determinate"
+              value={autoUpdate.status.percent}
+              sx={{ flex: 1, maxWidth: 200 }}
+            />
+          </Stack>
+        )}
+        {autoUpdate?.status.status === "downloaded" && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="center"
+            gap={1}
+            sx={{ px: 1, py: 0.5, bgcolor: "success.main", color: "success.contrastText" }}
+          >
+            <Typography variant="body2">
+              Version {autoUpdate.status.version} is ready.
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{ cursor: "pointer", textDecoration: "underline", fontWeight: "bold" }}
+              onClick={autoUpdate.install}
+            >
+              Restart to update
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{ cursor: "pointer", ml: 1 }}
+              onClick={autoUpdate.dismiss}
+            >
+              ✕
+            </Typography>
+          </Stack>
+        )}
         {embedMode ? (
           <RemountOnValueChange value={playerId}>
             <Stack>
